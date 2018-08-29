@@ -23,7 +23,7 @@ use partition::*;
 use plane::*;
 use cdef::*;
 use predict::{RAV1E_INTRA_MODES, RAV1E_INTRA_MODES_MINIMAL, RAV1E_INTER_MODES};
-use quantize::dc_q;
+use quantize::ac_q;
 use std;
 use std::f64;
 use std::vec::Vec;
@@ -130,7 +130,7 @@ fn compute_rd_cost(
   fi: &FrameInvariants, fs: &FrameState, w_y: usize, h_y: usize,
   is_chroma_block: bool, bo: &BlockOffset, bit_cost: u32, bit_depth: usize, luma_only: bool
 ) -> f64 {
-  let q = dc_q(fi.config.quantizer, bit_depth) as f64;
+  let q = ac_q(fi.config.quantizer, bit_depth) as f64;
 
   // Convert q into Q0 precision, given that libaom quantizers are Q3
   let q0 = q / 8.0_f64;

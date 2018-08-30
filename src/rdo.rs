@@ -213,7 +213,7 @@ pub fn rdo_tx_size_type(seq: &Sequence, fi: &FrameInvariants,
   cw.bc.set_block_size(bo, bsize);
   cw.bc.set_mode(bo, bsize, luma_mode);
 
-  let tx_type = if tx_set > TxSet::TX_SET_DCTONLY && fi.config.speed <= 3 && !skip {
+  let tx_type = if tx_set > TxSet::TX_SET_DCTONLY && fi.config.speed <= 3 && !skip && false {
       // FIXME: there is one redundant transform type decision per encoded block
       rdo_tx_type_decision(fi, fs, cw, luma_mode, bsize, bo, tx_size, tx_set, seq.bit_depth)
   } else {

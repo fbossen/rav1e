@@ -13,6 +13,7 @@ use partition::*;
 use context::BlockOffset;
 use plane::*;
 use context::BLOCK_TO_PLANE_SHIFT;
+use util::ILog;
 
 #[inline(always)]
 pub fn get_sad(plane_org: &mut PlaneSlice, plane_ref: &mut PlaneSlice, blk_h: usize, blk_w: usize) -> u32 {
@@ -54,7 +55,7 @@ pub fn motion_estimation(fi: &FrameInvariants, fs: &mut FrameState, bsize: Block
           let mut plane_ref = rec.frame.planes[0].slice(&PlaneOffset { x: x, y: y });
 
           let mut sad = get_sad(&mut plane_org, &mut plane_ref, blk_h, blk_w);
-          sad += (x.abs() + y.abs()) as u32;
+          sad += ((8 * x).ilog() + (8 * y).ilog()) as u32;
 
           if sad < lowest_sad {
             lowest_sad = sad;
@@ -92,7 +93,7 @@ pub fn motion_estimation(fi: &FrameInvariants, fs: &mut FrameState, bsize: Block
             let mut plane_ref = tmp_plane.slice(&PlaneOffset { x:0, y:0 });
 
             let mut sad = get_sad(&mut plane_org, &mut plane_ref, blk_h, blk_w);
-            sad += (cand_mv.row.abs() as u32 + cand_mv.col.abs() as u32) / 8;
+            sad += cand_mv.row.ilog() as u32 + cand_mv.col.ilog() as u32;
 
             if sad < lowest_sad {
               lowest_sad = sad;

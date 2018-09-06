@@ -38,7 +38,7 @@ pub fn motion_estimation(fi: &FrameInvariants, fs: &mut FrameState, bsize: Block
   match fi.rec_buffer.frames[fi.ref_frames[ref_frame - LAST_FRAME]] {
     Some(ref rec) => {
       let po = PlaneOffset { x: (bo.x as isize) << BLOCK_TO_PLANE_SHIFT, y: (bo.y as isize) << BLOCK_TO_PLANE_SHIFT };
-      let range = 32 as isize;
+      let range = 64 as isize;
       let blk_w = bsize.width();
       let blk_h = bsize.height();
       let x_lo = po.x - range;
@@ -49,8 +49,8 @@ pub fn motion_estimation(fi: &FrameInvariants, fs: &mut FrameState, bsize: Block
       let mut lowest_sad = 128*128*4096 as u32;
       let mut best_mv = MotionVector { row: 0, col: 0 };
 
-      for y in (y_lo..y_hi).step_by(2) {
-        for x in (x_lo..x_hi).step_by(2) {
+      for y in (y_lo..y_hi).step_by(4) {
+        for x in (x_lo..x_hi).step_by(4) {
           let mut plane_org = fs.input.planes[0].slice(&po);
           let mut plane_ref = rec.frame.planes[0].slice(&PlaneOffset { x: x, y: y });
 
@@ -68,7 +68,7 @@ pub fn motion_estimation(fi: &FrameInvariants, fs: &mut FrameState, bsize: Block
       let mode = PredictionMode::NEWMV;
       let mut tmp_plane = Plane::new(blk_w, blk_h, 0, 0, 0, 0);
 
-      let mut steps = vec![8, 4, 2];
+      let mut steps = vec![16, 8, 4, 2];
       if fi.allow_high_precision_mv {
         steps.push(1);
       }

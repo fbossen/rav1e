@@ -55,7 +55,7 @@ pub fn motion_estimation(fi: &FrameInvariants, fs: &mut FrameState, bsize: Block
           let mut plane_ref = rec.frame.planes[0].slice(&PlaneOffset { x: x, y: y });
 
           let mut sad = get_sad(&mut plane_org, &mut plane_ref, blk_h, blk_w);
-          sad += ((8 * x).ilog() + (8 * y).ilog()) as u32;
+          sad += ((8 * (x - po.x)).abs().ilog() + (8 * (y - po.y)).abs().ilog()) as u32;
 
           if sad < lowest_sad {
             lowest_sad = sad;
@@ -93,7 +93,7 @@ pub fn motion_estimation(fi: &FrameInvariants, fs: &mut FrameState, bsize: Block
             let mut plane_ref = tmp_plane.slice(&PlaneOffset { x:0, y:0 });
 
             let mut sad = get_sad(&mut plane_org, &mut plane_ref, blk_h, blk_w);
-            sad += cand_mv.row.ilog() as u32 + cand_mv.col.ilog() as u32;
+            sad += cand_mv.row.abs().ilog() as u32 + cand_mv.col.abs().ilog() as u32;
 
             if sad < lowest_sad {
               lowest_sad = sad;

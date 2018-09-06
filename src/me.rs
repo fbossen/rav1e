@@ -37,7 +37,7 @@ pub fn motion_estimation(fi: &FrameInvariants, fs: &mut FrameState, bsize: Block
   match fi.rec_buffer.frames[fi.ref_frames[ref_frame - LAST_FRAME]] {
     Some(ref rec) => {
       let po = PlaneOffset { x: (bo.x as isize) << BLOCK_TO_PLANE_SHIFT, y: (bo.y as isize) << BLOCK_TO_PLANE_SHIFT };
-      let range = 32 as isize;
+      let range = 64 as isize;
       let blk_w = bsize.width();
       let blk_h = bsize.height();
       let x_lo = po.x - range;

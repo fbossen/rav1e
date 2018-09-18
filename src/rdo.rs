@@ -388,10 +388,20 @@ pub fn rdo_mode_decision(
     };
   };
 
+  let ref_frame = LAST_FRAME;
+  let mut mvs = if fi.frame_type == FrameType::INTER {
+    motion_estimation(fi, fs, bsize, bo, ref_frame, pmv)
+  } else {
+    Vec::new()
+  };
+
+  if fi.frame_type == FrameType::INTER {
+    mode_set.push(PredictionMode::NEWMV);
+  }
+
   mode_set.iter().for_each(|&luma_mode| {
-    let ref_frame = LAST_FRAME;
     let mv = match luma_mode {
-      PredictionMode::NEWMV => motion_estimation(fi, fs, bsize, bo, ref_frame, pmv),
+      PredictionMode::NEWMV => mvs.pop().unwrap(),
       PredictionMode::NEARESTMV => if mv_stack.len() > 0 {
         mv_stack[0].this_mv
       } else {

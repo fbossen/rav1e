@@ -42,7 +42,7 @@ pub fn get_sad(
 pub fn motion_estimation(
   fi: &FrameInvariants, fs: &FrameState, bsize: BlockSize,
   bo: &BlockOffset, ref_frame: usize, pmv: &MotionVector
-) -> MotionVector {
+) -> Vec<MotionVector> {
   let num_mvs = 2;
   match fi.rec_buffer.frames[fi.ref_frames[ref_frame - LAST_FRAME]] {
     Some(ref rec) => {
@@ -136,9 +136,10 @@ pub fn motion_estimation(
         mv_cands.sort_unstable_by(|a, b| a.1.cmp(&b.1));
       }
 
-      mv_cands[0].0
+      mv_cands.truncate(num_mvs);
+      mv_cands.iter().map(|c| c.0).collect()
     }
 
-    None => MotionVector { row: 0, col: 0 }
+    None => vec![MotionVector { row: 0, col: 0 }]
   }
 }

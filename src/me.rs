@@ -82,7 +82,7 @@ pub fn motion_estimation(
         }
       }
 
-      mv_cands.sort_by(|a, b| a.1.cmp(&b.1));
+      mv_cands.sort_unstable_by(|a, b| a.1.cmp(&b.1));
 
       let mode = PredictionMode::NEWMV;
       let mut tmp_plane = Plane::new(blk_w, blk_h, 0, 0, 0, 0);
@@ -133,7 +133,7 @@ pub fn motion_estimation(
             }
           }
         }
-        mv_cands.sort_by(|a, b| a.1.cmp(&b.1));
+        mv_cands.sort_unstable_by(|a, b| a.1.cmp(&b.1));
       }
 
       mv_cands[0].0

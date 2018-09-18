@@ -43,6 +43,7 @@ pub fn motion_estimation(
   fi: &FrameInvariants, fs: &FrameState, bsize: BlockSize,
   bo: &BlockOffset, ref_frame: usize, pmv: &MotionVector
 ) -> MotionVector {
+  let num_mvs = 1;
   match fi.rec_buffer.frames[fi.ref_frames[ref_frame - LAST_FRAME]] {
     Some(ref rec) => {
       let po = PlaneOffset {
@@ -63,8 +64,7 @@ pub fn motion_estimation(
       let y_lo = po.y + ((-range + (pmv.row / 8) as isize).max(mvy_min / 8));
       let y_hi = po.y + ((range + (pmv.row / 8) as isize).min(mvy_max / 8));
 
-      let mut lowest_sad = 128 * 128 * 4096 as u32;
-      let mut best_mv = MotionVector { row: 0, col: 0 };
+      let mut mv_cands = Vec::new();
 
       for y in (y_lo..y_hi).step_by(2) {
         for x in (x_lo..x_hi).step_by(2) {
@@ -73,15 +73,17 @@ pub fn motion_estimation(
 
           let sad = get_sad(&mut plane_org, &mut plane_ref, blk_h, blk_w);
 
-          if sad < lowest_sad {
-            lowest_sad = sad;
-            best_mv = MotionVector {
-              row: 8 * (y as i16 - po.y as i16),
-              col: 8 * (x as i16 - po.x as i16)
-            }
-          }
+          let mv = MotionVector {
+            row: 8 * (y as i16 - po.y as i16),
+            col: 8 * (x as i16 - po.x as i16)
+          };
+
+          mv_cands.push((mv, sad));
         }
       }
+
+      mv_cands.sort_by(|a, b| a.1.cmp(&b.1));
+      mv_cands.truncate(num_mvs);
 
       let mode = PredictionMode::NEWMV;
       let mut tmp_plane = Plane::new(blk_w, blk_h, 0, 0, 0, 0);
@@ -92,7 +94,7 @@ pub fn motion_estimation(
       }
 
       for step in steps {
-        let center_mv_h = best_mv;
+        let center_mv_h = mv_cands[0].0;
         for i in 0..3 {
           for j in 0..3 {
             // Skip the center point that was already tested
@@ -126,15 +128,15 @@ pub fn motion_estimation(
 
             let sad = get_sad(&mut plane_org, &mut plane_ref, blk_h, blk_w);
 
-            if sad < lowest_sad {
-              lowest_sad = sad;
-              best_mv = cand_mv;
-            }
+            mv_cands.push((cand_mv, sad));
           }
         }
+
+        mv_cands.sort_by(|a, b| a.1.cmp(&b.1));
+        mv_cands.truncate(num_mvs);
       }
 
-      best_mv
+      mv_cands[0].0
     }
 
     None => MotionVector { row: 0, col: 0 }

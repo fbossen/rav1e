@@ -43,7 +43,7 @@ pub fn motion_estimation(
   fi: &FrameInvariants, fs: &FrameState, bsize: BlockSize,
   bo: &BlockOffset, ref_frame: usize, pmv: &MotionVector
 ) -> MotionVector {
-  let num_mvs = 1;
+  let num_mvs = 2;
   match fi.rec_buffer.frames[fi.ref_frames[ref_frame - LAST_FRAME]] {
     Some(ref rec) => {
       let po = PlaneOffset {
@@ -83,7 +83,6 @@ pub fn motion_estimation(
       }
 
       mv_cands.sort_by(|a, b| a.1.cmp(&b.1));
-      mv_cands.truncate(num_mvs);
 
       let mode = PredictionMode::NEWMV;
       let mut tmp_plane = Plane::new(blk_w, blk_h, 0, 0, 0, 0);
@@ -94,46 +93,47 @@ pub fn motion_estimation(
       }
 
       for step in steps {
-        let center_mv_h = mv_cands[0].0;
-        for i in 0..3 {
-          for j in 0..3 {
-            // Skip the center point that was already tested
-            if i == 1 && j == 1 {
-              continue;
+        mv_cands.truncate(num_mvs);
+        let centers: Vec<MotionVector> = mv_cands.iter().map(|c| c.0).collect();
+        for center_mv_h in centers {
+          for i in 0..3 {
+            for j in 0..3 {
+              // Skip the center point that was already tested
+              if i == 1 && j == 1 {
+                continue;
+              }
+
+              let cand_mv = MotionVector {
+                row: center_mv_h.row + step * (i as i16 - 1),
+                col: center_mv_h.col + step * (j as i16 - 1)
+              };
+
+              if (cand_mv.col as isize) < mvx_min || (cand_mv.col as isize) > mvx_max {
+                continue;
+              }
+              if (cand_mv.row as isize) < mvy_min || (cand_mv.row as isize) > mvy_max {
+                continue;
+              }
+
+              {
+                let tmp_slice =
+                  &mut tmp_plane.mut_slice(&PlaneOffset { x: 0, y: 0 });
+
+                mode.predict_inter(
+                  fi, 0, &po, tmp_slice, blk_w, blk_h, ref_frame, &cand_mv, 8,
+                );
+              }
+
+              let mut plane_org = fs.input.planes[0].slice(&po);
+              let mut plane_ref = tmp_plane.slice(&PlaneOffset { x: 0, y: 0 });
+
+              let sad = get_sad(&mut plane_org, &mut plane_ref, blk_h, blk_w);
+
+              mv_cands.push((cand_mv, sad));
             }
-
-            let cand_mv = MotionVector {
-              row: center_mv_h.row + step * (i as i16 - 1),
-              col: center_mv_h.col + step * (j as i16 - 1)
-            };
-
-            if (cand_mv.col as isize) < mvx_min || (cand_mv.col as isize) > mvx_max {
-              continue;
-            }
-            if (cand_mv.row as isize) < mvy_min || (cand_mv.row as isize) > mvy_max {
-              continue;
-            }
-
-            {
-              let tmp_slice =
-                &mut tmp_plane.mut_slice(&PlaneOffset { x: 0, y: 0 });
-
-              mode.predict_inter(
-                fi, 0, &po, tmp_slice, blk_w, blk_h, ref_frame, &cand_mv, 8,
-              );
-            }
-
-            let mut plane_org = fs.input.planes[0].slice(&po);
-            let mut plane_ref = tmp_plane.slice(&PlaneOffset { x: 0, y: 0 });
-
-            let sad = get_sad(&mut plane_org, &mut plane_ref, blk_h, blk_w);
-
-            mv_cands.push((cand_mv, sad));
           }
         }
-
         mv_cands.sort_by(|a, b| a.1.cmp(&b.1));
-        mv_cands.truncate(num_mvs);
       }
 
       mv_cands[0].0

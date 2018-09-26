@@ -1,6 +1,15 @@
+// Copyright (c) 2018, The rav1e contributors. All rights reserved
+//
+// This source code is subject to the terms of the BSD 2 Clause License and
+// the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
+// was not distributed with this source code in the LICENSE file, you can
+// obtain it at www.aomedia.org/license/software. If the Alliance for Open
+// Media Patent License 1.0 was not distributed with this source code in the
+// PATENTS file, you can obtain it at www.aomedia.org/license/patent.
+
 use encoder::*;
 use context::CDFContext;
-use partition::LAST_FRAME;
+use partition::*;
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -103,16 +112,22 @@ impl Context {
         deblock: Default::default(),
       };
 
-      self.fi.frame_type = if self.fi.number % 30 == 0 {
+      let frame_number_in_segment = self.fi.number % 30;
+
+      self.fi.order_hint = frame_number_in_segment as u32;
+
+      self.fi.frame_type = if frame_number_in_segment == 0 {
         FrameType::KEY
       } else {
         FrameType::INTER
       };
 
+      let slot_idx = frame_number_in_segment % REF_FRAMES as u64;
+
       self.fi.refresh_frame_flags = if self.fi.frame_type == FrameType::KEY {
         ALL_REF_FRAMES_MASK
       } else {
-        1
+        1 << slot_idx
       };
 
       self.fi.intra_only = self.fi.frame_type == FrameType::KEY
@@ -120,18 +135,46 @@ impl Context {
       // self.fi.use_prev_frame_mvs =
       //  !(self.fi.intra_only || self.fi.error_resilient);
 
+      let use_multiple_ref_frames = self.fi.config.speed <= 2;
+
+      let log_boost_frequency = if use_multiple_ref_frames {
+        2 // Higher quality frame every 4 frames
+      } else {
+        0 // No boosting with single reference frame
+      };
+
+      assert!(log_boost_frequency >= 0 && log_boost_frequency <= 2);
+      let boost_frequency = 1 << log_boost_frequency;
       self.fi.base_q_idx = if self.fi.frame_type == FrameType::KEY {
         let q_boost = 15;
         self.fi.config.quantizer.max(1 + q_boost).min(255 + q_boost) - q_boost
-      } else {
+      } else if slot_idx & (boost_frequency - 1) == 0 {
         self.fi.config.quantizer.max(1).min(255)
+      } else {
+        let q_drop = 15;
+        self.fi.config.quantizer.min(255 - q_drop) + q_drop
       } as u8;
+
+      let first_ref_frame = LAST_FRAME;
+      let second_ref_frame = if use_multiple_ref_frames {
+        ALTREF_FRAME
+      } else {
+        NONE_FRAME
+      };
 
       self.fi.primary_ref_frame = if self.fi.intra_only || self.fi.error_resilient {
         PRIMARY_REF_NONE
       } else {
-        (LAST_FRAME - LAST_FRAME) as u32
+        (first_ref_frame - LAST_FRAME) as u32
       };
+
+      for i in 0..INTER_REFS_PER_FRAME {
+        self.fi.ref_frames[i] = if i == second_ref_frame - LAST_FRAME {
+          (REF_FRAMES + slot_idx as usize - 2) & boost_frequency as usize
+        } else {
+          (REF_FRAMES + slot_idx as usize - 1) & (REF_FRAMES - 1)
+        };
+      }
 
       let data = encode_frame(&mut self.seq, &mut self.fi, &mut fs);
 

@@ -26,6 +26,8 @@ use plane::*;
 use util::clamp;
 use util::msb;
 use std::*;
+use entropymode::*;
+use token_cdfs::*;
 
 use self::REF_CONTEXTS;
 use self::SINGLE_REFS;
@@ -35,7 +37,7 @@ pub const PLANES: usize = 3;
 const PARTITION_PLOFFSET: usize = 4;
 const PARTITION_BLOCK_SIZES: usize = 4 + 1;
 const PARTITION_CONTEXTS_PRIMARY: usize = PARTITION_BLOCK_SIZES * PARTITION_PLOFFSET;
-const PARTITION_CONTEXTS: usize = PARTITION_CONTEXTS_PRIMARY;
+pub const PARTITION_CONTEXTS: usize = PARTITION_CONTEXTS_PRIMARY;
 pub const PARTITION_TYPES: usize = 4;
 
 pub const MI_SIZE_LOG2: usize = 2;
@@ -52,30 +54,38 @@ pub const MAX_TX_SIZE: usize = 32;
 const MAX_TX_SQUARE: usize = MAX_TX_SIZE * MAX_TX_SIZE;
 
 pub const INTRA_MODES: usize = 13;
-const UV_INTRA_MODES: usize = 14;
+pub const UV_INTRA_MODES: usize = 14;
 
-const CFL_JOINT_SIGNS: usize = 8;
-const CFL_ALPHA_CONTEXTS: usize = 6;
-const CFL_ALPHABET_SIZE: usize = 16;
+pub const CFL_JOINT_SIGNS: usize = 8;
+pub const CFL_ALPHA_CONTEXTS: usize = 6;
+pub const CFL_ALPHABET_SIZE: usize = 16;
+pub const SKIP_MODE_CONTEXTS: usize = 3;
+pub const COMP_INDEX_CONTEXTS: usize = 6;
+pub const COMP_GROUP_IDX_CONTEXTS: usize = 6;
 
-const BLOCK_SIZE_GROUPS: usize = 4;
-const MAX_ANGLE_DELTA: usize = 3;
-const DIRECTIONAL_MODES: usize = 8;
-const KF_MODE_CONTEXTS: usize = 5;
+pub const BLOCK_SIZE_GROUPS: usize = 4;
+pub const MAX_ANGLE_DELTA: usize = 3;
+pub const DIRECTIONAL_MODES: usize = 8;
+pub const KF_MODE_CONTEXTS: usize = 5;
 
-const EXT_PARTITION_TYPES: usize = 10;
-const TX_SIZES: usize = 4;
-const TX_SETS: usize = 9;
-const TX_SETS_INTRA: usize = 3;
-const TX_SETS_INTER: usize = 4;
+pub const EXT_PARTITION_TYPES: usize = 10;
 
+pub const TX_SIZE_SQR_CONTEXTS: usize = TxSize::TX_SIZES as usize - 1; // 64X64 is currently unused
+
+pub const TX_SETS: usize = 9;
+pub const TX_SETS_INTRA: usize = 3;
+pub const TX_SETS_INTER: usize = 4;
+pub const TXFM_PARTITION_CONTEXTS: usize = ((TxSize::TX_SIZES - TxSize::TX_8X8 as usize) * 6 - 3);
 const MAX_REF_MV_STACK_SIZE: usize = 8;
 pub const REF_CAT_LEVEL: u32 = 640;
 
 pub const FRAME_LF_COUNT: usize = 4;
 pub const MAX_LOOP_FILTER: usize = 63;
 const DELTA_LF_SMALL: u32 = 3;
-const DELTA_LF_PROBS: usize = DELTA_LF_SMALL as usize;
+pub const DELTA_LF_PROBS: usize = DELTA_LF_SMALL as usize;
+
+const DELTA_Q_SMALL: u32 = 3;
+pub const DELTA_Q_PROBS: usize = DELTA_Q_SMALL as usize;
 
 // Number of transform types in each set type
 static num_tx_set: [usize; TX_SETS] =
@@ -127,17 +137,15 @@ static ss_size_lookup: [[[BlockSize; 2]; 2]; BlockSize::BLOCK_SIZES_ALL] = [
   [  [ BLOCK_32X64, BLOCK_32X32 ], [BLOCK_16X64, BLOCK_16X32 ] ],
   [  [ BLOCK_64X32, BLOCK_64X16 ], [BLOCK_32X32, BLOCK_32X16 ] ],
   [  [ BLOCK_64X64, BLOCK_64X32 ], [BLOCK_32X64, BLOCK_32X32 ] ],
-  [  [ BLOCK_64X128, BLOCK_64X64 ], [ BLOCK_32X128, BLOCK_32X64 ] ],
-  [  [ BLOCK_128X64, BLOCK_128X32 ], [ BLOCK_64X64, BLOCK_64X32 ] ],
+  [  [ BLOCK_64X128, BLOCK_64X64 ], [ BLOCK_INVALID, BLOCK_32X64 ] ],
+  [  [ BLOCK_128X64, BLOCK_INVALID ], [ BLOCK_64X64, BLOCK_64X32 ] ],
   [  [ BLOCK_128X128, BLOCK_128X64 ], [ BLOCK_64X128, BLOCK_64X64 ] ],
   [  [ BLOCK_4X16, BLOCK_4X8 ], [BLOCK_4X16, BLOCK_4X8 ] ],
   [  [ BLOCK_16X4, BLOCK_16X4 ], [BLOCK_8X4, BLOCK_8X4 ] ],
   [  [ BLOCK_8X32, BLOCK_8X16 ], [BLOCK_INVALID, BLOCK_4X16 ] ],
   [  [ BLOCK_32X8, BLOCK_INVALID ], [BLOCK_16X8, BLOCK_16X4 ] ],
   [  [ BLOCK_16X64, BLOCK_16X32 ], [BLOCK_INVALID, BLOCK_8X32 ] ],
-  [  [ BLOCK_64X16, BLOCK_INVALID ], [BLOCK_32X16, BLOCK_32X8 ] ],
-  [  [ BLOCK_32X128, BLOCK_32X64 ], [ BLOCK_INVALID, BLOCK_16X64 ] ],
-  [  [ BLOCK_128X32, BLOCK_INVALID ], [ BLOCK_64X32, BLOCK_64X16 ] ],
+  [  [ BLOCK_64X16, BLOCK_INVALID ], [BLOCK_32X16, BLOCK_32X8 ] ]
 ];
 
 pub fn get_plane_block_size(bsize: BlockSize, subsampling_x: usize, subsampling_y: usize)
@@ -170,9 +178,7 @@ static partition_context_lookup: [[u8; 2]; BlockSize::BLOCK_SIZES_ALL] = [
   [ 30, 24 ],  // 8X32  - {0b11110, 0b11000}
   [ 24, 30 ],  // 32X8  - {0b11000, 0b11110}
   [ 28, 16 ],  // 16X64 - {0b11100, 0b10000}
-  [ 16, 28 ],  // 64X16 - {0b10000, 0b11100}
-  [ 24, 0 ],   // 32X128- {0b11000, 0b00000}
-  [ 0, 24 ],   // 128X32- {0b00000, 0b11000}
+  [ 16, 28 ]   // 64X16 - {0b10000, 0b11100}
 ];
 
 static size_group_lookup: [u8; BlockSize::BLOCK_SIZES_ALL] = [
@@ -185,233 +191,42 @@ static size_group_lookup: [u8; BlockSize::BLOCK_SIZES_ALL] = [
   3, 3, 3, 3, 0,
   0, 1,
   1, 2,
-  2, 3, 3
+  2
 ];
 
 static num_pels_log2_lookup: [u8; BlockSize::BLOCK_SIZES_ALL] = [
-  4, 5, 5, 6, 7, 7, 8, 9, 9, 10, 11, 11, 12, 13, 13, 14, 6, 6, 8, 8, 10, 10, 12, 12];
+  4, 5, 5, 6, 7, 7, 8, 9, 9, 10, 11, 11, 12, 13, 13, 14, 6, 6, 8, 8, 10, 10];
 
-pub static subsize_lookup: [[BlockSize; BlockSize::BLOCK_SIZES_ALL]; EXT_PARTITION_TYPES] =
-[
-  [     // PARTITION_NONE
-    //                            4X4
-                                  BLOCK_4X4,
-    // 4X8,        8X4,           8X8
-    BLOCK_4X8,     BLOCK_8X4,     BLOCK_8X8,
-    // 8X16,       16X8,          16X16
-    BLOCK_8X16,    BLOCK_16X8,    BLOCK_16X16,
-    // 16X32,      32X16,         32X32
-    BLOCK_16X32,   BLOCK_32X16,   BLOCK_32X32,
-    // 32X64,      64X32,         64X64
-    BLOCK_32X64,   BLOCK_64X32,   BLOCK_64X64,
-    // 64x128,     128x64,        128x128
-    BLOCK_64X128,  BLOCK_128X64,  BLOCK_128X128,
-    // 4X16,       16X4,          8X32
-    BLOCK_4X16,    BLOCK_16X4,    BLOCK_8X32,
-    // 32X8,       16X64,         64X16
-    BLOCK_32X8,    BLOCK_16X64,   BLOCK_64X16,
-    // 32x128,     128x32
-    BLOCK_32X128,  BLOCK_128X32
-  ], [  // PARTITION_HORZ
-    //                            4X4
-                                  BLOCK_INVALID,
-    // 4X8,        8X4,           8X8
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X4,
-    // 8X16,       16X8,          16X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X8,
-    // 16X32,      32X16,         32X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X16,
-    // 32X64,      64X32,         64X64
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X32,
-    // 64x128,     128x64,        128x128
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_128X64,
-    // 4X16,       16X4,          8X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32X8,       16X64,         64X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32x128,     128x32
-    BLOCK_INVALID, BLOCK_INVALID
-  ], [  // PARTITION_VERT
-    //                            4X4
-                                  BLOCK_INVALID,
-    // 4X8,        8X4,           8X8
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_4X8,
-    // 8X16,       16X8,          16X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X16,
-    // 16X32,      32X16,         32X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X32,
-    // 32X64,      64X32,         64X64
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X64,
-    // 64x128,     128x64,        128x128
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X128,
-    // 4X16,       16X4,          8X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32X8,       16X64,         64X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32x128,     128x32
-    BLOCK_INVALID, BLOCK_INVALID
-  ], [  // PARTITION_SPLIT
-    //                            4X4
-                                  BLOCK_INVALID,
-    // 4X8,        8X4,           8X8
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_4X4,
-    // 8X16,       16X8,          16X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X8,
-    // 16X32,      32X16,         32X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X16,
-    // 32X64,      64X32,         64X64
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X32,
-    // 64x128,     128x64,        128x128
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X64,
-    // 4X16,       16X4,          8X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32X8,       16X64,         64X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32x128,     128x32
-    BLOCK_INVALID, BLOCK_INVALID
-  ], [  // PARTITION_HORZ_A
-    //                            4X4
-                                  BLOCK_INVALID,
-    // 4X8,        8X4,           8X8
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X4,
-    // 8X16,       16X8,          16X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X8,
-    // 16X32,      32X16,         32X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X16,
-    // 32X64,      64X32,         64X64
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X32,
-    // 64x128,     128x64,        128x128
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_128X64,
-    // 4X16,       16X4,          8X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32X8,       16X64,         64X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32x128,     128x32
-    BLOCK_INVALID, BLOCK_INVALID
-  ], [  // PARTITION_HORZ_B
-    //                            4X4
-                                  BLOCK_INVALID,
-    // 4X8,        8X4,           8X8
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X4,
-    // 8X16,       16X8,          16X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X8,
-    // 16X32,      32X16,         32X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X16,
-    // 32X64,      64X32,         64X64
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X32,
-    // 64x128,     128x64,        128x128
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_128X64,
-    // 4X16,       16X4,          8X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32X8,       16X64,         64X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32x128,     128x32
-    BLOCK_INVALID, BLOCK_INVALID
-  ], [  // PARTITION_VERT_A
-    //                            4X4
-                                  BLOCK_INVALID,
-    // 4X8,        8X4,           8X8
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_4X8,
-    // 8X16,       16X8,          16X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X16,
-    // 16X32,      32X16,         32X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X32,
-    // 32X64,      64X32,         64X64
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X64,
-    // 64x128,     128x64,        128x128
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X128,
-    // 4X16,       16X4,          8X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32X8,       16X64,         64X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32x128,     128x32
-    BLOCK_INVALID, BLOCK_INVALID
-  ], [  // PARTITION_VERT_B
-    //                            4X4
-                                  BLOCK_INVALID,
-    // 4X8,        8X4,           8X8
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_4X8,
-    // 8X16,       16X8,          16X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X16,
-    // 16X32,      32X16,         32X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X32,
-    // 32X64,      64X32,         64X64
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X64,
-    // 64x128,     128x64,        128x128
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X128,
-    // 4X16,       16X4,          8X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32X8,       16X64,         64X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32x128,     128x32
-    BLOCK_INVALID, BLOCK_INVALID
-  ], [  // PARTITION_HORZ_4
-    //                            4X4
-                                  BLOCK_INVALID,
-    // 4X8,        8X4,           8X8
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 8X16,       16X8,          16X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X4,
-    // 16X32,      32X16,         32X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X8,
-    // 32X64,      64X32,         64X64
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X16,
-    // 64x128,     128x64,        128x128
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_128X32,
-    // 4X16,       16X4,          8X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32X8,       16X64,         64X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32x128,     128x32
-    BLOCK_INVALID, BLOCK_INVALID
-  ], [  // PARTITION_VERT_4
-    //                            4X4
-                                  BLOCK_INVALID,
-    // 4X8,        8X4,           8X8
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 8X16,       16X8,          16X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_4X16,
-    // 16X32,      32X16,         32X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X32,
-    // 32X64,      64X32,         64X64
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X64,
-    // 64x128,     128x64,        128x128
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X128,
-    // 4X16,       16X4,          8X32
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32X8,       16X64,         64X16
-    BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
-    // 32x128,     128x32
-    BLOCK_INVALID, BLOCK_INVALID
-  ]
-];
-
-const PLANE_TYPES: usize = 2;
+pub const PLANE_TYPES: usize = 2;
 const REF_TYPES: usize = 2;
-const SKIP_CONTEXTS: usize = 3;
-const INTRA_INTER_CONTEXTS: usize = 4;
-const DRL_MODE_CONTEXTS: usize = 3;
+pub const SKIP_CONTEXTS: usize = 3;
+pub const INTRA_INTER_CONTEXTS: usize = 4;
+pub const INTER_MODE_CONTEXTS: usize = 8;
+pub const DRL_MODE_CONTEXTS: usize = 3;
+pub const COMP_INTER_CONTEXTS: usize = 5;
+pub const COMP_REF_TYPE_CONTEXTS: usize = 5;
+pub const UNI_COMP_REF_CONTEXTS: usize = 3;
 
 // Level Map
-const TXB_SKIP_CONTEXTS: usize =  13;
+pub const TXB_SKIP_CONTEXTS: usize =  13;
 
-const EOB_COEF_CONTEXTS: usize =  9;
+pub const EOB_COEF_CONTEXTS: usize =  9;
 
 const SIG_COEF_CONTEXTS_2D: usize =  26;
 const SIG_COEF_CONTEXTS_1D: usize =  16;
-const SIG_COEF_CONTEXTS_EOB: usize =  4;
-const SIG_COEF_CONTEXTS: usize = SIG_COEF_CONTEXTS_2D + SIG_COEF_CONTEXTS_1D;
+pub const SIG_COEF_CONTEXTS_EOB: usize =  4;
+pub const SIG_COEF_CONTEXTS: usize = SIG_COEF_CONTEXTS_2D + SIG_COEF_CONTEXTS_1D;
 
 const COEFF_BASE_CONTEXTS: usize = SIG_COEF_CONTEXTS;
-const DC_SIGN_CONTEXTS: usize =  3;
+pub const DC_SIGN_CONTEXTS: usize =  3;
 
 const BR_TMP_OFFSET: usize =  12;
 const BR_REF_CAT: usize =  4;
-const LEVEL_CONTEXTS: usize =  21;
+pub const LEVEL_CONTEXTS: usize =  21;
 
-const NUM_BASE_LEVELS: usize =  2;
+pub const NUM_BASE_LEVELS: usize =  2;
 
-const BR_CDF_SIZE: usize = 4;
+pub const BR_CDF_SIZE: usize = 4;
 const COEFF_BASE_RANGE: usize = 4 * (BR_CDF_SIZE - 1);
 
 const COEFF_CONTEXT_BITS: usize = 6;
@@ -747,6 +562,7 @@ static intra_mode_to_tx_type_context: [TxType; INTRA_MODES] = [
   ADST_ADST, // PAETH
 ];
 
+
 static uv2y: [PredictionMode; UV_INTRA_MODES] = [
   DC_PRED,       // UV_DC_PRED
   V_PRED,        // UV_V_PRED
@@ -793,58 +609,10 @@ pub struct NMVContext {
 }
 
 extern "C" {
-  static default_partition_cdf:
-    [[u16; EXT_PARTITION_TYPES + 1]; PARTITION_CONTEXTS];
-  static default_kf_y_mode_cdf:
-    [[[u16; INTRA_MODES + 1]; KF_MODE_CONTEXTS]; KF_MODE_CONTEXTS];
-  static default_if_y_mode_cdf: [[u16; INTRA_MODES + 1]; BLOCK_SIZE_GROUPS];
-  static default_uv_mode_cdf: [[[u16; UV_INTRA_MODES + 1]; INTRA_MODES]; 2];
-  static default_cfl_sign_cdf: [u16; CFL_JOINT_SIGNS + 1];
-  static default_cfl_alpha_cdf: [[u16; CFL_ALPHABET_SIZE + 1]; CFL_ALPHA_CONTEXTS];
-  static default_newmv_cdf: [[u16; 2 + 1]; NEWMV_MODE_CONTEXTS];
-  static default_zeromv_cdf: [[u16; 2 + 1]; GLOBALMV_MODE_CONTEXTS];
-  static default_refmv_cdf: [[u16; 2 + 1]; REFMV_MODE_CONTEXTS];
-  static default_intra_ext_tx_cdf:
-    [[[[u16; TX_TYPES + 1]; INTRA_MODES]; TX_SIZES]; TX_SETS_INTRA];
-  static default_inter_ext_tx_cdf:
-    [[[u16; TX_TYPES + 1]; TX_SIZES]; TX_SETS_INTER];
-  static default_skip_cdfs: [[u16; 3]; SKIP_CONTEXTS];
-  static default_intra_inter_cdf: [[u16; 3]; INTRA_INTER_CONTEXTS];
-  static default_angle_delta_cdf:
-    [[u16; 2 * MAX_ANGLE_DELTA + 1 + 1]; DIRECTIONAL_MODES];
-  static default_filter_intra_cdfs: [[u16; 3]; BlockSize::BLOCK_SIZES_ALL];
-
-  static default_single_ref_cdf: [[[u16; 2 + 1]; SINGLE_REFS - 1]; REF_CONTEXTS];
   static av1_scan_orders: [[SCAN_ORDER; TX_TYPES]; TxSize::TX_SIZES_ALL];
-  static default_delta_lf_multi_cdf: [[u16; DELTA_LF_PROBS + 1 + 1]; FRAME_LF_COUNT];
-  static default_delta_lf_cdf: [u16; DELTA_LF_PROBS + 1 + 1];
 
   // lv_map
-  static av1_default_txb_skip_cdfs:
-    [[[[u16; 3]; TXB_SKIP_CONTEXTS]; TxSize::TX_SIZES]; 4];
-  static av1_default_dc_sign_cdfs:
-    [[[[u16; 3]; DC_SIGN_CONTEXTS]; PLANE_TYPES]; 4];
-  static av1_default_eob_extra_cdfs:
-    [[[[[u16; 3]; EOB_COEF_CONTEXTS]; PLANE_TYPES]; TxSize::TX_SIZES]; 4];
-
-  static av1_default_eob_multi16_cdfs: [[[[u16; 5 + 1]; 2]; PLANE_TYPES]; 4];
-  static av1_default_eob_multi32_cdfs: [[[[u16; 6 + 1]; 2]; PLANE_TYPES]; 4];
-  static av1_default_eob_multi64_cdfs: [[[[u16; 7 + 1]; 2]; PLANE_TYPES]; 4];
-  static av1_default_eob_multi128_cdfs: [[[[u16; 8 + 1]; 2]; PLANE_TYPES]; 4];
-  static av1_default_eob_multi256_cdfs: [[[[u16; 9 + 1]; 2]; PLANE_TYPES]; 4];
-  static av1_default_eob_multi512_cdfs: [[[[u16; 10 + 1]; 2]; PLANE_TYPES]; 4];
-  static av1_default_eob_multi1024_cdfs: [[[[u16; 11 + 1]; 2]; PLANE_TYPES]; 4];
-
-  static av1_default_coeff_base_eob_multi_cdfs:
-    [[[[[u16; 3 + 1]; SIG_COEF_CONTEXTS_EOB]; PLANE_TYPES]; TxSize::TX_SIZES]; 4];
-  static av1_default_coeff_base_multi_cdfs:
-    [[[[[u16; 4 + 1]; SIG_COEF_CONTEXTS]; PLANE_TYPES]; TxSize::TX_SIZES]; 4];
-  static av1_default_coeff_lps_multi_cdfs: [[[[[u16; BR_CDF_SIZE + 1];
-    LEVEL_CONTEXTS]; PLANE_TYPES];
-    TxSize::TX_SIZES]; 4];
-
   static default_nmv_context: NMVContext;
-  static default_drl_cdf:[[u16; 2 + 1]; DRL_MODE_CONTEXTS];
 }
 
 #[repr(C)]
@@ -874,8 +642,8 @@ pub struct CDFContext {
   zeromv_cdf: [[u16; 2 + 1]; GLOBALMV_MODE_CONTEXTS],
   refmv_cdf: [[u16; 2 + 1]; REFMV_MODE_CONTEXTS],
   intra_tx_cdf:
-    [[[[u16; TX_TYPES + 1]; INTRA_MODES]; TX_SIZES]; TX_SETS_INTRA],
-  inter_tx_cdf: [[[u16; TX_TYPES + 1]; TX_SIZES]; TX_SETS_INTER],
+    [[[[u16; TX_TYPES + 1]; INTRA_MODES]; TX_SIZE_SQR_CONTEXTS]; TX_SETS_INTRA],
+  inter_tx_cdf: [[[u16; TX_TYPES + 1]; TX_SIZE_SQR_CONTEXTS]; TX_SETS_INTER],
   skip_cdfs: [[u16; 3]; SKIP_CONTEXTS],
   intra_inter_cdfs: [[u16; 3]; INTRA_INTER_CONTEXTS],
   angle_delta_cdf: [[u16; 2 * MAX_ANGLE_DELTA + 1 + 1]; DIRECTIONAL_MODES],
@@ -988,7 +756,7 @@ impl CDFContext {
     reset_2d!(self.zeromv_cdf);
     reset_2d!(self.refmv_cdf);
 
-    for i in 0..TX_SIZES {
+    for i in 0..TX_SIZE_SQR_CONTEXTS {
       for j in 0..INTRA_MODES {
         self.intra_tx_cdf[1][i][j][7] = 0;
         self.intra_tx_cdf[2][i][j][5] = 0;
@@ -1542,8 +1310,8 @@ impl BlockContext {
   }
 
   pub fn set_block_size(&mut self, bo: &BlockOffset, bsize: BlockSize) {
-    let n4_w = BlockSize::MI_SIZE_WIDE[bsize as usize];
-    let n4_h = BlockSize::MI_SIZE_HIGH[bsize as usize];
+    let n4_w = bsize.width_mi();
+    let n4_h = bsize.height_mi();
     self.for_each(bo, bsize, |block| { block.n4_w = n4_w; block.n4_h = n4_h } );
   }
 
@@ -2100,7 +1868,7 @@ impl ContextWriter {
   }
 
   fn has_tr(&mut self, bo: &BlockOffset, bsize: BlockSize, is_sec_rect: bool) -> bool {
-    let sb_mi_size = BlockSize::MI_SIZE_WIDE[BLOCK_64X64 as usize]; /* Assume 64x64 for now */
+    let sb_mi_size = BLOCK_64X64.width_mi(); /* Assume 64x64 for now */
     let mask_row = bo.y & LOCAL_BLOCK_MASK;
     let mask_col = bo.x & LOCAL_BLOCK_MASK;
     let target_n4_w = bsize.width_mi();
@@ -2108,7 +1876,7 @@ impl ContextWriter {
 
     let mut bs = target_n4_w.max(target_n4_h);
 
-    if bs > BlockSize::MI_SIZE_WIDE[BLOCK_64X64 as usize] {
+    if bs > BLOCK_64X64.width_mi() {
       return false;
     }
 
@@ -2160,7 +1928,16 @@ impl ContextWriter {
     cmp::max(col_offset, -(mi_col as isize))
   }
 
-  fn find_matching_mv(&self, blk: &Block, mv_stack: &mut Vec<CandidateMV>, weight: u32) -> bool {
+  fn find_matching_mv(&self, blk: &Block, mv_stack: &mut Vec<CandidateMV>) -> bool {
+    for mv_cand in mv_stack {
+      if blk.mv[0].row == mv_cand.this_mv.row && blk.mv[0].col == mv_cand.this_mv.col {
+        return true;
+      }
+    }
+    false
+  }
+
+  fn find_matching_mv_and_update_weight(&self, blk: &Block, mv_stack: &mut Vec<CandidateMV>, weight: u32) -> bool {
     for mut mv_cand in mv_stack {
       if blk.mv[0].row == mv_cand.this_mv.row && blk.mv[0].col == mv_cand.this_mv.col {
         mv_cand.weight += weight;
@@ -2177,7 +1954,7 @@ impl ContextWriter {
     }
 
     if blk.ref_frames[0] == ref_frame {
-      let found_match = self.find_matching_mv(blk, mv_stack, weight);
+      let found_match = self.find_matching_mv_and_update_weight(blk, mv_stack, weight);
 
       if !found_match && mv_stack.len() < MAX_REF_MV_STACK_SIZE {
         let mv_cand = CandidateMV {
@@ -2199,6 +1976,21 @@ impl ContextWriter {
     }
   }
 
+  fn add_extra_mv_candidate(&self, blk: &Block, mv_stack: &mut Vec<CandidateMV>) {
+    for cand_list in 0..2 {
+      if blk.ref_frames[cand_list] > INTRA_FRAME {
+        if !self.find_matching_mv(blk, mv_stack) {
+          let mv_cand = CandidateMV {
+            this_mv: blk.mv[0],
+            comp_mv: blk.mv[1],
+            weight: 2
+          };
+          mv_stack.push(mv_cand);
+        }
+      }
+    }
+  }
+
   fn scan_row_mbmi(&mut self, bo: &BlockOffset, row_offset: isize, max_row_offs: isize,
                    processed_rows: &mut isize, ref_frame: usize,
                    mv_stack: &mut Vec<CandidateMV>, newmv_count: &mut usize, bsize: BlockSize) -> bool {
@@ -2206,9 +1998,9 @@ impl ContextWriter {
     let target_n4_w = bsize.width_mi();
 
     let end_mi = cmp::min(cmp::min(target_n4_w, bc.cols - bo.x),
-                          BlockSize::MI_SIZE_WIDE[BLOCK_64X64 as usize]);
-    let n4_w_8 = BlockSize::MI_SIZE_WIDE[BLOCK_8X8 as usize];
-    let n4_w_16 = BlockSize::MI_SIZE_WIDE[BLOCK_16X16 as usize];
+                          BLOCK_64X64.width_mi());
+    let n4_w_8 = BLOCK_8X8.width_mi();
+    let n4_w_16 = BLOCK_16X16.width_mi();
     let mut col_offset = 0;
 
     if row_offset.abs() > 1 {
@@ -2260,9 +2052,9 @@ impl ContextWriter {
     let target_n4_h = bsize.height_mi();
 
     let end_mi = cmp::min(cmp::min(target_n4_h, bc.rows - bo.y),
-                          BlockSize::MI_SIZE_HIGH[BLOCK_64X64 as usize]);
-    let n4_h_8 = BlockSize::MI_SIZE_HIGH[BLOCK_8X8 as usize];
-    let n4_h_16 = BlockSize::MI_SIZE_HIGH[BLOCK_16X16 as usize];
+                          BLOCK_64X64.height_mi());
+    let n4_h_8 = BLOCK_8X8.height_mi();
+    let n4_h_16 = BLOCK_16X16.height_mi();
     let mut row_offset = 0;
 
     if col_offset.abs() > 1 {
@@ -2330,10 +2122,10 @@ impl ContextWriter {
     let target_n4_w = bsize.width_mi();
 
     let mut max_row_offs = 0 as isize;
-    let row_adj = (target_n4_h < BlockSize::MI_SIZE_HIGH[BLOCK_8X8 as usize]) && (bo.y & 0x01) != 0x0;
+    let row_adj = (target_n4_h < BLOCK_8X8.height_mi()) && (bo.y & 0x01) != 0x0;
 
     let mut max_col_offs = 0 as isize;
-    let col_adj = (target_n4_w < BlockSize::MI_SIZE_WIDE[BLOCK_8X8 as usize]) && (bo.x & 0x01) != 0x0;
+    let col_adj = (target_n4_w < BLOCK_8X8.width_mi()) && (bo.x & 0x01) != 0x0;
 
     let mut processed_rows = 0 as isize;
     let mut processed_cols = 0 as isize;
@@ -2345,7 +2137,7 @@ impl ContextWriter {
       max_row_offs = -2 * MVREF_ROW_COLS as isize + row_adj as isize;
 
       // limit max offset for small blocks
-      if target_n4_h < BlockSize::MI_SIZE_HIGH[BLOCK_8X8 as usize] {
+      if target_n4_h < BLOCK_8X8.height_mi() {
         max_row_offs = -2 * 2 + row_adj as isize;
       }
 
@@ -2357,7 +2149,7 @@ impl ContextWriter {
       max_col_offs = -2 * MVREF_ROW_COLS as isize + col_adj as isize;
 
       // limit max offset for small blocks
-      if target_n4_w < BlockSize::MI_SIZE_WIDE[BLOCK_8X8 as usize] {
+      if target_n4_w < BLOCK_8X8.width_mi() {
         max_col_offs = -2 * 2 + col_adj as isize;
       }
 
@@ -2425,8 +2217,38 @@ impl ContextWriter {
 
     /* TODO: Find nearest match and assign nearest and near mvs */
 
-    // Sort MV stack according to weight
+    // 7.10.2.11 Sort MV stack according to weight
     mv_stack.sort_by(|a, b| b.weight.cmp(&a.weight));
+
+    if mv_stack.len() < 2 {
+      // 7.10.2.12 Extra search process
+
+      let w4 = bsize.width_mi().min(16).min(self.bc.cols - bo.x);
+      let h4 = bsize.height_mi().min(16).min(self.bc.rows - bo.y);
+      let num4x4 = w4.min(h4);
+
+      let passes = if up_avail { 0 } else { 1 } .. if left_avail { 2 } else { 1 };
+
+      for pass in passes {
+        let mut idx = 0;
+        while idx < num4x4 && mv_stack.len() < 2 {
+          let rbo = if pass == 0 {
+            bo.with_offset(idx as isize, -1)
+          } else {
+            bo.with_offset(-1, idx as isize)
+          };
+
+          let blk = &self.bc.at(&rbo);
+          self.add_extra_mv_candidate(blk, mv_stack);
+
+          idx += if pass == 0 {
+            blk.n4_w
+          } else {
+            blk.n4_h
+          };
+        }
+      }
+    }
 
     /* TODO: Handle single reference frame extension */
 
@@ -2461,6 +2283,10 @@ impl ContextWriter {
       /* TODO: Set zeromv ref to the converted global motion vector */
     } else {
       /* TODO: Set the zeromv ref to 0 */
+    }
+
+    if ref_frame <= INTRA_FRAME {
+      return 0;
     }
 
     let mode_context = self.setup_mvref_list(bo, ref_frame, mv_stack, bsize, is_sec_rect);
@@ -2592,7 +2418,6 @@ impl ContextWriter {
 
   pub fn write_ref_frames(&mut self, w: &mut dyn Writer, bo: &BlockOffset) {
     let rf = self.bc.at(bo).ref_frames;
-    assert!(rf[0] == LAST_FRAME);
 
     /* TODO: Handle multiple references */
 

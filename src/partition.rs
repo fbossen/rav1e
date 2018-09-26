@@ -14,7 +14,7 @@ use self::BlockSize::*;
 use self::TxSize::*;
 use encoder::FrameInvariants;
 
-pub const NONE_FRAME: isize = -1;
+pub const NONE_FRAME: usize = 8;
 pub const INTRA_FRAME: usize = 0;
 pub const LAST_FRAME: usize = 1;
 pub const LAST2_FRAME: usize = 2;
@@ -92,29 +92,17 @@ pub enum BlockSize {
   BLOCK_32X8,
   BLOCK_16X64,
   BLOCK_64X16,
-  BLOCK_32X128,
-  BLOCK_128X32,
   BLOCK_INVALID
 }
 
 impl BlockSize {
-  pub const BLOCK_SIZES_ALL: usize = 24;
+  pub const BLOCK_SIZES_ALL: usize = 22;
 
   const BLOCK_SIZE_WIDTH_LOG2: [usize; BlockSize::BLOCK_SIZES_ALL] =
-    [2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 2, 4, 3, 5, 4, 6, 5, 7];
+    [2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 2, 4, 3, 5, 4, 6];
 
   const BLOCK_SIZE_HEIGHT_LOG2: [usize; BlockSize::BLOCK_SIZES_ALL] =
-    [2, 3, 2, 3, 4, 3, 4, 5, 4, 5, 6, 5, 6, 7, 6, 7, 4, 2, 5, 3, 6, 4, 7, 5];
-
-  pub const MI_SIZE_WIDE: [usize; BlockSize::BLOCK_SIZES_ALL] = [
-    1, 1, 2, 2, 2, 4, 4, 4, 8, 8, 8, 16, 16, 16, 32, 32, 1, 4, 2, 8, 4, 16, 8,
-    32,
-  ];
-
-  pub const MI_SIZE_HIGH: [usize; BlockSize::BLOCK_SIZES_ALL] = [
-    1, 2, 1, 2, 4, 2, 4, 8, 4, 8, 16, 8, 16, 32, 16, 32, 4, 1, 8, 2, 16, 4,
-    32, 8,
-  ];
+    [2, 3, 2, 3, 4, 3, 4, 5, 4, 5, 6, 5, 6, 7, 6, 7, 4, 2, 5, 3, 6, 4];
 
   pub fn cfl_allowed(self) -> bool {
     // TODO: fix me when enabling EXT_PARTITION_TYPES
@@ -122,7 +110,7 @@ impl BlockSize {
   }
 
   pub fn width(self) -> usize {
-    1 << BlockSize::BLOCK_SIZE_WIDTH_LOG2[self as usize]
+    1 << self.width_log2()
   }
 
   pub fn width_log2(self) -> usize {
@@ -134,7 +122,7 @@ impl BlockSize {
   }
 
   pub fn height(self) -> usize {
-    1 << BlockSize::BLOCK_SIZE_HEIGHT_LOG2[self as usize]
+    1 << self.height_log2()
   }
 
   pub fn height_log2(self) -> usize {
@@ -151,6 +139,185 @@ impl BlockSize {
 
   pub fn is_sub8x8(self) -> bool {
     self.width_log2().min(self.height_log2()) < 3
+  }
+
+  const SUBSIZE_LOOKUP: [[BlockSize; BlockSize::BLOCK_SIZES_ALL]; EXT_PARTITION_TYPES] =
+  [
+    [ // PARTITION_NONE
+      //                            4X4
+                                    BLOCK_4X4,
+      // 4X8,        8X4,           8X8
+      BLOCK_4X8,     BLOCK_8X4,     BLOCK_8X8,
+      // 8X16,       16X8,          16X16
+      BLOCK_8X16,    BLOCK_16X8,    BLOCK_16X16,
+      // 16X32,      32X16,         32X32
+      BLOCK_16X32,   BLOCK_32X16,   BLOCK_32X32,
+      // 32X64,      64X32,         64X64
+      BLOCK_32X64,   BLOCK_64X32,   BLOCK_64X64,
+      // 64x128,     128x64,        128x128
+      BLOCK_64X128,  BLOCK_128X64,  BLOCK_128X128,
+      // 4X16,       16X4,          8X32
+      BLOCK_4X16,    BLOCK_16X4,    BLOCK_8X32,
+      // 32X8,       16X64,         64X16
+      BLOCK_32X8,    BLOCK_16X64,   BLOCK_64X16
+    ], [  // PARTITION_HORZ
+      //                            4X4
+                                    BLOCK_INVALID,
+      // 4X8,        8X4,           8X8
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X4,
+      // 8X16,       16X8,          16X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X8,
+      // 16X32,      32X16,         32X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X16,
+      // 32X64,      64X32,         64X64
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X32,
+      // 64x128,     128x64,        128x128
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_128X64,
+      // 4X16,       16X4,          8X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 32X8,       16X64,         64X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID
+    ], [  // PARTITION_VERT
+      //                            4X4
+                                    BLOCK_INVALID,
+      // 4X8,        8X4,           8X8
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_4X8,
+      // 8X16,       16X8,          16X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X16,
+      // 16X32,      32X16,         32X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X32,
+      // 32X64,      64X32,         64X64
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X64,
+      // 64x128,     128x64,        128x128
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X128,
+      // 4X16,       16X4,          8X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 32X8,       16X64,         64X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID
+    ], [  // PARTITION_SPLIT
+      //                            4X4
+                                    BLOCK_INVALID,
+      // 4X8,        8X4,           8X8
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_4X4,
+      // 8X16,       16X8,          16X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X8,
+      // 16X32,      32X16,         32X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X16,
+      // 32X64,      64X32,         64X64
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X32,
+      // 64x128,     128x64,        128x128
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X64,
+      // 4X16,       16X4,          8X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 32X8,       16X64,         64X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID
+    ], [  // PARTITION_HORZ_A
+      //                            4X4
+                                    BLOCK_INVALID,
+      // 4X8,        8X4,           8X8
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X4,
+      // 8X16,       16X8,          16X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X8,
+      // 16X32,      32X16,         32X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X16,
+      // 32X64,      64X32,         64X64
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X32,
+      // 64x128,     128x64,        128x128
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_128X64,
+      // 4X16,       16X4,          8X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 32X8,       16X64,         64X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+    ], [  // PARTITION_HORZ_B
+      //                            4X4
+                                    BLOCK_INVALID,
+      // 4X8,        8X4,           8X8
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X4,
+      // 8X16,       16X8,          16X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X8,
+      // 16X32,      32X16,         32X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X16,
+      // 32X64,      64X32,         64X64
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X32,
+      // 64x128,     128x64,        128x128
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_128X64,
+      // 4X16,       16X4,          8X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 32X8,       16X64,         64X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID
+    ], [  // PARTITION_VERT_A
+      //                            4X4
+                                    BLOCK_INVALID,
+      // 4X8,        8X4,           8X8
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_4X8,
+      // 8X16,       16X8,          16X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X16,
+      // 16X32,      32X16,         32X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X32,
+      // 32X64,      64X32,         64X64
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X64,
+      // 64x128,     128x64,        128x128
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X128,
+      // 4X16,       16X4,          8X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 32X8,       16X64,         64X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID
+    ], [  // PARTITION_VERT_B
+      //                            4X4
+                                    BLOCK_INVALID,
+      // 4X8,        8X4,           8X8
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_4X8,
+      // 8X16,       16X8,          16X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X16,
+      // 16X32,      32X16,         32X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X32,
+      // 32X64,      64X32,         64X64
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X64,
+      // 64x128,     128x64,        128x128
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X128,
+      // 4X16,       16X4,          8X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 32X8,       16X64,         64X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID
+    ], [  // PARTITION_HORZ_4
+      //                            4X4
+                                    BLOCK_INVALID,
+      // 4X8,        8X4,           8X8
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 8X16,       16X8,          16X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X4,
+      // 16X32,      32X16,         32X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_32X8,
+      // 32X64,      64X32,         64X64
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_64X16,
+      // 64x128,     128x64,        128x128
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 4X16,       16X4,          8X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 32X8,       16X64,         64X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID
+    ], [  // PARTITION_VERT_4
+      //                            4X4
+                                    BLOCK_INVALID,
+      // 4X8,        8X4,           8X8
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 8X16,       16X8,          16X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_4X16,
+      // 16X32,      32X16,         32X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_8X32,
+      // 32X64,      64X32,         64X64
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_16X64,
+      // 64x128,     128x64,        128x128
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 4X16,       16X4,          8X32
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID,
+      // 32X8,       16X64,         64X16
+      BLOCK_INVALID, BLOCK_INVALID, BLOCK_INVALID
+    ]
+  ];
+
+  pub fn subsize(self, partition: PartitionType) -> BlockSize {
+    BlockSize::SUBSIZE_LOOKUP[partition as usize][self as usize]
   }
 }
 
@@ -360,6 +527,65 @@ pub enum PredictionMode {
   NEW_NEWMV
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub enum InterIntraMode {
+  II_DC_PRED,
+  II_V_PRED,
+  II_H_PRED,
+  II_SMOOTH_PRED,
+  INTERINTRA_MODES
+}
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub enum CompoundType {
+  COMPOUND_AVERAGE,
+  COMPOUND_WEDGE,
+  COMPOUND_DIFFWTD,
+  COMPOUND_TYPES,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub enum MotionMode {
+  SIMPLE_TRANSLATION,
+  OBMC_CAUSAL,    // 2-sided OBMC
+  WARPED_CAUSAL,  // 2-sided WARPED
+  MOTION_MODES
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub enum PaletteSize {
+  TWO_COLORS,
+  THREE_COLORS,
+  FOUR_COLORS,
+  FIVE_COLORS,
+  SIX_COLORS,
+  SEVEN_COLORS,
+  EIGHT_COLORS,
+  PALETTE_SIZES
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub enum PaletteColor {
+  PALETTE_COLOR_ONE,
+  PALETTE_COLOR_TWO,
+  PALETTE_COLOR_THREE,
+  PALETTE_COLOR_FOUR,
+  PALETTE_COLOR_FIVE,
+  PALETTE_COLOR_SIX,
+  PALETTE_COLOR_SEVEN,
+  PALETTE_COLOR_EIGHT,
+  PALETTE_COLORS
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
+pub enum FilterIntraMode {
+  FILTER_DC_PRED,
+  FILTER_V_PRED,
+  FILTER_H_PRED,
+  FILTER_D157_PRED,
+  FILTER_PAETH_PRED,
+  FILTER_INTRA_MODES
+}
+
 #[derive(Copy, Clone)]
 pub struct MotionVector {
   pub row: i16,
@@ -368,7 +594,8 @@ pub struct MotionVector {
 
 pub const NEWMV_MODE_CONTEXTS: usize = 7;
 pub const GLOBALMV_MODE_CONTEXTS: usize = 2;
-pub const REFMV_MODE_CONTEXTS: usize = 9;
+pub const REFMV_MODE_CONTEXTS: usize = 6;
+pub const INTER_COMPOUND_MODES: usize = (1 + PredictionMode::NEW_NEWMV as usize - PredictionMode::NEAREST_NEARESTMV as usize);
 
 pub const REFMV_OFFSET: usize = 4;
 pub const GLOBALMV_OFFSET: usize = 3;
@@ -684,7 +911,6 @@ impl PredictionMode {
     ref_frame: usize, mv: &MotionVector, bit_depth: usize
   ) {
     assert!(!self.is_intra());
-    assert!(ref_frame == LAST_FRAME);
 
     match fi.rec_buffer.frames[fi.ref_frames[ref_frame - LAST_FRAME]] {
       Some(ref rec) => {
@@ -827,8 +1053,4 @@ pub enum TxSet {
   TX_SET_ALL16_16X16,
   // Discrete Trig transforms w/ flip (9) + Identity (1) + 1D Hor/Ver (6)
   TX_SET_ALL16
-}
-
-pub fn get_subsize(bsize: BlockSize, partition: PartitionType) -> BlockSize {
-  subsize_lookup[partition as usize][bsize as usize]
 }

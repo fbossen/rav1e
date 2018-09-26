@@ -1,3 +1,12 @@
+// Copyright (c) 2018, The rav1e contributors. All rights reserved
+//
+// This source code is subject to the terms of the BSD 2 Clause License and
+// the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
+// was not distributed with this source code in the LICENSE file, you can
+// obtain it at www.aomedia.org/license/software. If the Alliance for Open
+// Media Patent License 1.0 was not distributed with this source code in the
+// PATENTS file, you can obtain it at www.aomedia.org/license/patent.
+
 use cdef::*;
 use context::*;
 use deblock::*;
@@ -56,6 +65,7 @@ impl Frame {
 
 #[derive(Debug, Clone)]
 pub struct ReferenceFrame {
+  pub order_hint: u32,
   pub frame: Frame,
   pub cdfs: CDFContext
 }
@@ -216,7 +226,7 @@ impl Sequence {
             enable_interintra_compound: false,
             enable_masked_compound: false,
             enable_dual_filter: false,
-            enable_order_hint: false,
+            enable_order_hint: true,
             enable_jnt_comp: false,
             enable_ref_frame_mvs: false,
             enable_warped_motion: false,
@@ -310,6 +320,7 @@ pub struct FrameInvariants {
     pub w_in_b: usize,
     pub h_in_b: usize,
     pub number: u64,
+    pub order_hint: u32,
     pub show_frame: bool,
     pub showable_frame: bool,
     pub error_resilient: bool,
@@ -377,6 +388,7 @@ impl FrameInvariants {
             w_in_b: 2 * width.align_power_of_two_and_shift(3), // MiCols, ((width+7)/8)<<3 >> MI_SIZE_LOG2
             h_in_b: 2 * height.align_power_of_two_and_shift(3), // MiRows, ((height+7)/8)<<3 >> MI_SIZE_LOG2
             number: 0,
+            order_hint: 0,
             show_frame: true,
             showable_frame: true,
             error_resilient: false,
@@ -772,8 +784,11 @@ impl<'a> UncompressedHeader for BitWriter<'a, BE> {
       }
 
       if seq.enable_order_hint {
-        assert!(false); // Not supported by rav1e yet!
+        let n = seq.order_hint_bits_minus_1 + 1;
+        let mask = (1 << n) - 1;
+        self.write(n, fi.order_hint & mask)?;
       }
+
       if fi.error_resilient || fi.intra_only {
       } else {
         self.write(PRIMARY_REF_BITS, fi.primary_ref_frame)?;
@@ -835,14 +850,13 @@ impl<'a> UncompressedHeader for BitWriter<'a, BE> {
           // Done by above
         } else {
           if seq.enable_order_hint {
-            assert!(false); // Not supported by rav1e yet!
             self.write_bit(frame_refs_short_signaling)?;
             if frame_refs_short_signaling {
               assert!(false); // Not supported by rav1e yet!
             }
           }
 
-          for i in 0..7 {
+          for i in 0..INTER_REFS_PER_FRAME {
             if !frame_refs_short_signaling {
               self.write(REF_FRAMES_LOG2 as u32, fi.ref_frames[i] as u8)?;
             }
@@ -1258,14 +1272,15 @@ pub fn encode_tx_block(
 
 pub fn motion_compensate(fi: &FrameInvariants, fs: &mut FrameState, cw: &mut ContextWriter,
                          luma_mode: PredictionMode, ref_frame: usize, mv: MotionVector,
-                         bsize: BlockSize, bo: &BlockOffset, bit_depth: usize) {
+                         bsize: BlockSize, bo: &BlockOffset, bit_depth: usize,
+                         luma_only: bool) {
   if luma_mode.is_intra() { return; }
 
   let PlaneConfig { xdec, ydec, .. } = fs.input.planes[1].cfg;
 
   // Inter mode prediction can take place once for a whole partition,
   // instead of each tx-block.
-  let num_planes = 1 + if has_chroma(bo, bsize, xdec, ydec) { 2 } else { 0 };
+  let num_planes = 1 + if !luma_only && has_chroma(bo, bsize, xdec, ydec) { 2 } else { 0 };
 
   for p in 0..num_planes {
     let plane_bsize = if p == 0 { bsize }
@@ -1286,14 +1301,17 @@ pub fn motion_compensate(fi: &FrameInvariants, fs: &mut FrameState, cw: &mut Con
         assert!(xdec == 1 && ydec == 1);
         // TODO: these are only valid for 4:2:0
         let mv0 = &cw.bc.at(&bo.with_offset(-1,-1)).mv[0];
+        let rf0 = cw.bc.at(&bo.with_offset(-1,-1)).ref_frames[0];
         let mv1 = &cw.bc.at(&bo.with_offset(0,-1)).mv[0];
+        let rf1 = cw.bc.at(&bo.with_offset(0,-1)).ref_frames[0];
         let po1 = PlaneOffset { x: po.x+2, y: po.y };
         let mv2 = &cw.bc.at(&bo.with_offset(-1,0)).mv[0];
+        let rf2 = cw.bc.at(&bo.with_offset(-1,0)).ref_frames[0];
         let po2 = PlaneOffset { x: po.x, y: po.y+2 };
         let po3 = PlaneOffset { x: po.x+2, y: po.y+2 };
-        luma_mode.predict_inter(fi, p, &po, &mut rec.mut_slice(&po), 2, 2, ref_frame, mv0, bit_depth);
-        luma_mode.predict_inter(fi, p, &po1, &mut rec.mut_slice(&po1), 2, 2, ref_frame, mv1, bit_depth);
-        luma_mode.predict_inter(fi, p, &po2, &mut rec.mut_slice(&po2), 2, 2, ref_frame, mv2, bit_depth);
+        luma_mode.predict_inter(fi, p, &po, &mut rec.mut_slice(&po), 2, 2, rf0, mv0, bit_depth);
+        luma_mode.predict_inter(fi, p, &po1, &mut rec.mut_slice(&po1), 2, 2, rf1, mv1, bit_depth);
+        luma_mode.predict_inter(fi, p, &po2, &mut rec.mut_slice(&po2), 2, 2, rf2, mv2, bit_depth);
         luma_mode.predict_inter(fi, p, &po3, &mut rec.mut_slice(&po3), 2, 2, ref_frame, &mv, bit_depth);
       }
     } else {
@@ -1334,6 +1352,9 @@ pub fn encode_block_b(seq: &Sequence, fi: &FrameInvariants, fs: &mut FrameState,
     }
     cw.bc.set_block_size(bo, bsize);
     cw.bc.set_mode(bo, bsize, luma_mode);
+    cw.bc.set_ref_frame(bo, bsize, ref_frame);
+    cw.bc.set_motion_vector(bo, bsize, mv);
+
     //write_q_deltas();
     if cw.bc.code_deltas && fs.deblock.block_deltas_enabled && (bsize < sb_size || !skip) {
         cw.write_block_deblock_deltas(w, bo, fs.deblock.block_delta_multi);
@@ -1344,8 +1365,6 @@ pub fn encode_block_b(seq: &Sequence, fi: &FrameInvariants, fs: &mut FrameState,
         cw.write_is_inter(w, bo, is_inter);
         if is_inter {
             cw.fill_neighbours_ref_counts(bo);
-            cw.bc.set_ref_frame(bo, bsize, ref_frame);
-            cw.bc.set_motion_vector(bo, bsize, mv);
             cw.write_ref_frames(w, bo);
 
             //let mode_context = if bo.x == 0 && bo.y == 0 { 0 } else if bo.x ==0 || bo.y == 0 { 51 } else { 85 };
@@ -1438,7 +1457,7 @@ pub fn encode_block_b(seq: &Sequence, fi: &FrameInvariants, fs: &mut FrameState,
         }
     }
 
-    motion_compensate(fi, fs, cw, luma_mode, ref_frame, mv, bsize, bo, bit_depth);
+    motion_compensate(fi, fs, cw, luma_mode, ref_frame, mv, bsize, bo, bit_depth, false);
 
     if is_inter {
       write_tx_tree(fi, fs, cw, w, luma_mode, bo, bsize, tx_size, tx_type, skip, bit_depth, false);
@@ -1630,7 +1649,7 @@ pub fn write_tx_tree(fi: &FrameInvariants, fs: &mut FrameState, cw: &mut Context
 
 fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut FrameState,
                              cw: &mut ContextWriter, w_pre_cdef: &mut dyn Writer, w_post_cdef: &mut dyn Writer,
-                             bsize: BlockSize, bo: &BlockOffset) -> f64 {
+                             bsize: BlockSize, bo: &BlockOffset, pmv: &MotionVector) -> f64 {
     let mut rd_cost = std::f64::MAX;
 
     if bo.x >= cw.bc.cols || bo.y >= cw.bc.rows {
@@ -1678,8 +1697,7 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
             cw.write_partition(w, bo, partition, bsize);
             cost = (w.tell_frac() - tell) as f64 * get_lambda(fi, seq.bit_depth)/ ((1 << OD_BITRES) as f64);
         }
-        let pmv = MotionVector { row: 0, col: 0 };
-        let mode_decision = rdo_mode_decision(seq, fi, fs, cw, bsize, bo, &pmv).part_modes[0].clone();
+        let mode_decision = rdo_mode_decision(seq, fi, fs, cw, bsize, bo, pmv).part_modes[0].clone();
         let (mode_luma, mode_chroma) = (mode_decision.pred_mode_luma, mode_decision.pred_mode_chroma);
         let cfl = mode_decision.pred_cfl_params;
         let ref_frame = mode_decision.ref_frame;
@@ -1710,7 +1728,7 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
         w_post_cdef.rollback(&w_post_checkpoint);
 
         partition = PartitionType::PARTITION_SPLIT;
-        subsize = get_subsize(bsize, partition);
+        subsize = bsize.subsize(partition);
 
         let nosplit_rd_cost = rd_cost;
 
@@ -1738,7 +1756,8 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
                     w_pre_cdef,
                     w_post_cdef,
                     subsize,
-                    offset
+                    offset,
+                    &best_decision.mv
                 )
             }).sum::<f64>();
 
@@ -1779,7 +1798,7 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
         }
     }
 
-    subsize = get_subsize(bsize, partition);
+    subsize = bsize.subsize(partition);
 
     if bsize >= BlockSize::BLOCK_8X8 &&
         (bsize == BlockSize::BLOCK_8X8 || partition != PartitionType::PARTITION_SPLIT) {
@@ -1828,7 +1847,7 @@ fn encode_partition_topdown(seq: &Sequence, fi: &FrameInvariants, fs: &mut Frame
             partition < PartitionType::PARTITION_INVALID);
 
     let hbs = bs >> 1; // Half the block size in blocks
-    let subsize = get_subsize(bsize, partition);
+    let subsize = bsize.subsize(partition);
     let pmv =  MotionVector { row: 0, col: 0 };
 
     if bsize >= BlockSize::BLOCK_8X8 {
@@ -1960,9 +1979,10 @@ fn encode_tile(sequence: &mut Sequence, fi: &FrameInvariants, fs: &mut FrameStat
 
             // Encode SuperBlock
             if fi.config.speed == 0 {
+                let pmv = MotionVector { row: 0, col: 0 };
                 encode_partition_bottomup(sequence, fi, fs, &mut cw,
                                           &mut w, &mut w_post_cdef,
-                                          BlockSize::BLOCK_64X64, &bo);
+                                          BlockSize::BLOCK_64X64, &bo, &pmv);
             }
             else {
                 encode_partition_topdown(sequence, fi, fs, &mut cw,
@@ -1983,7 +2003,7 @@ fn encode_tile(sequence: &mut Sequence, fi: &FrameInvariants, fs: &mut FrameStat
     /* TODO: Don't apply if lossless */
     deblock_filter_optimize(fi, fs, &mut cw.bc, bit_depth);
     if fs.deblock.levels[0] != 0 || fs.deblock.levels[1] != 0 {
-        deblock_filter_frame(fi, fs, &mut cw.bc, bit_depth);
+        deblock_filter_frame(fs, &mut cw.bc, bit_depth);
     }
     /* TODO: Don't apply if lossless */
     if sequence.enable_cdef {
@@ -2054,7 +2074,7 @@ pub fn encode_frame(sequence: &mut Sequence, fi: &mut FrameInvariants, fs: &mut 
 }
 
 pub fn update_rec_buffer(fi: &mut FrameInvariants, fs: FrameState) {
-  let rfs = Rc::new(ReferenceFrame { frame: fs.rec, cdfs: fs.cdfs } );
+  let rfs = Rc::new(ReferenceFrame { order_hint: fi.order_hint, frame: fs.rec, cdfs: fs.cdfs } );
   for i in 0..(REF_FRAMES as usize) {
     if (fi.refresh_frame_flags & (1 << i)) != 0 {
       fi.rec_buffer.frames[i] = Some(Rc::clone(&rfs));

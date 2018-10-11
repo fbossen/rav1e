@@ -20,7 +20,7 @@ use std::fmt;
 use transform::*;
 use util::*;
 
-use bitstream_io::{BitWriter, BE, LE};
+use bitstream_io::{BitWriter, BigEndian, LittleEndian};
 use std;
 use std::io;
 use std::io::*;
@@ -246,6 +246,12 @@ impl Sequence {
             separate_uv_delta_q: false,
         }
     }
+
+    pub fn get_relative_dist(&self, a: u32, b: u32) -> i32 {
+        let diff = a as i32 - b as i32;
+        let m = 1 << self.order_hint_bits_minus_1;
+        (diff & (m - 1)) - (diff & m)
+    }
 }
 
 use std::sync::Arc;
@@ -331,6 +337,7 @@ pub struct FrameInvariants {
     pub allow_high_precision_mv: bool,
     pub frame_type: FrameType,
     pub show_existing_frame: bool,
+    pub frame_to_show_map_idx: u32,
     pub use_reduced_tx_set: bool,
     pub reference_mode: ReferenceMode,
     pub use_prev_frame_mvs: bool,
@@ -358,6 +365,7 @@ pub struct FrameInvariants {
     pub delta_q_present: bool,
     pub config: EncoderConfig,
     pub ref_frames: [usize; INTER_REFS_PER_FRAME],
+    pub ref_frame_sign_bias: [bool; INTER_REFS_PER_FRAME],
     pub rec_buffer: ReferenceFramesSet,
     pub base_q_idx: u8,
 }
@@ -399,6 +407,7 @@ impl FrameInvariants {
             allow_high_precision_mv: false,
             frame_type: FrameType::KEY,
             show_existing_frame: false,
+            frame_to_show_map_idx: 0,
             use_reduced_tx_set,
             reference_mode: ReferenceMode::SINGLE,
             use_prev_frame_mvs: false,
@@ -424,6 +433,7 @@ impl FrameInvariants {
             delta_q_present: false,
             config,
             ref_frames: [0; INTER_REFS_PER_FRAME],
+            ref_frame_sign_bias: [false; INTER_REFS_PER_FRAME],
             rec_buffer: ReferenceFramesSet::new(),
             base_q_idx: config.quantizer as u8,
         }
@@ -438,6 +448,7 @@ impl FrameInvariants {
             deblock: Default::default(),
         }
     }
+
 }
 
 impl fmt::Display for FrameInvariants{
@@ -480,7 +491,7 @@ impl fmt::Display for FrameType{
 }
 
 pub fn write_ivf_header(output_file: &mut dyn io::Write, width: usize, height: usize, num: usize, den: usize) {
-    let mut bw = BitWriter::<LE>::new(output_file);
+    let mut bw = BitWriter::endian(output_file, LittleEndian);
     bw.write_bytes(b"DKIF").unwrap();
     bw.write(16, 0).unwrap(); // version
     bw.write(16, 32).unwrap(); // version
@@ -494,7 +505,7 @@ pub fn write_ivf_header(output_file: &mut dyn io::Write, width: usize, height: u
 }
 
 pub fn write_ivf_frame(output_file: &mut dyn io::Write, pts: u64, data: &[u8]) {
-    let mut bw = BitWriter::<LE>::new(output_file);
+    let mut bw = BitWriter::endian(output_file, LittleEndian);
     bw.write(32, data.len() as u32).unwrap();
     bw.write(64, pts).unwrap();
     bw.write_bytes(data).unwrap();
@@ -531,7 +542,7 @@ const LEVEL_BITS:usize = LEVEL_MAJOR_BITS + LEVEL_MINOR_BITS;
 const FRAME_ID_LENGTH: usize = 15;
 const DELTA_FRAME_ID_LENGTH: usize = 14;
 
-impl<'a> UncompressedHeader for BitWriter<'a, BE> {
+impl<W: io::Write> UncompressedHeader for BitWriter<W, BigEndian> {
     // Start of OBU Headers
     // Write OBU Header syntax
     fn write_obu_header(&mut self, obu_type: OBU_Type, obu_extension: u32)
@@ -694,7 +705,7 @@ impl<'a> UncompressedHeader for BitWriter<'a, BE> {
       } else {
         if fi.show_existing_frame {
           self.write_bit(true)?; // show_existing_frame=1
-          self.write(3, 0)?; // show last frame
+          self.write(3, fi.frame_to_show_map_idx)?;
 
           //TODO:
           /* temporal_point_info();
@@ -706,6 +717,7 @@ impl<'a> UncompressedHeader for BitWriter<'a, BE> {
             // write display_frame_id;
           }*/
 
+          self.write_bit(true)?; // trailing bit
           self.byte_align()?;
           return Ok((()));
         }
@@ -1122,12 +1134,12 @@ fn aom_uleb_encode(mut value: u64, coded_value: &mut [u8]) -> usize {
 
 fn write_obus(packet: &mut dyn io::Write, sequence: &mut Sequence,
                             fi: &mut FrameInvariants, fs: &FrameState) -> io::Result<()> {
-    //let mut uch = BitWriter::<BE>::new(packet);
+    //let mut uch = BitWriter::endian(packet, BigEndian);
     let obu_extension = 0 as u32;
 
     let mut buf1 = Vec::new();
     {
-        let mut bw1 = BitWriter::<BE>::new(&mut buf1);
+        let mut bw1 = BitWriter::endian(&mut buf1, BigEndian);
       bw1.write_obu_header(OBU_Type::OBU_TEMPORAL_DELIMITER, obu_extension)?;
       bw1.write(8,0)?;	// size of payload == 0, one byte
     }
@@ -1138,13 +1150,13 @@ fn write_obus(packet: &mut dyn io::Write, sequence: &mut Sequence,
     if fi.frame_type == FrameType::KEY {
         let mut buf2 = Vec::new();
         {
-            let mut bw2 = BitWriter::<BE>::new(&mut buf2);
+            let mut bw2 = BitWriter::endian(&mut buf2, BigEndian);
             bw2.write_sequence_header_obu(sequence, fi)?;
             bw2.byte_align()?;
         }
 
         {
-            let mut bw1 = BitWriter::<BE>::new(&mut buf1);
+            let mut bw1 = BitWriter::endian(&mut buf1, BigEndian);
             bw1.write_obu_header(OBU_Type::OBU_SEQUENCE_HEADER, obu_extension)?;
         }
         packet.write(&buf1).unwrap();
@@ -1152,7 +1164,7 @@ fn write_obus(packet: &mut dyn io::Write, sequence: &mut Sequence,
 
         let obu_payload_size = buf2.len() as u64;
         {
-            let mut bw1 = BitWriter::<BE>::new(&mut buf1);
+            let mut bw1 = BitWriter::endian(&mut buf1, BigEndian);
             // uleb128()
             let mut coded_payload_length = [0 as u8; 8];
             let leb_size = aom_uleb_encode(obu_payload_size, &mut coded_payload_length);
@@ -1169,12 +1181,12 @@ fn write_obus(packet: &mut dyn io::Write, sequence: &mut Sequence,
 
     let mut buf2 = Vec::new();
     {
-        let mut bw2 = BitWriter::<BE>::new(&mut buf2);
+        let mut bw2 = BitWriter::endian(&mut buf2, BigEndian);
         bw2.write_frame_header_obu(sequence, fi, fs)?;
     }
 
     {
-        let mut bw1 = BitWriter::<BE>::new(&mut buf1);
+        let mut bw1 = BitWriter::endian(&mut buf1, BigEndian);
         bw1.write_obu_header(OBU_Type::OBU_FRAME_HEADER, obu_extension)?;
     }
     packet.write(&buf1).unwrap();
@@ -1182,7 +1194,7 @@ fn write_obus(packet: &mut dyn io::Write, sequence: &mut Sequence,
 
     let obu_payload_size = buf2.len() as u64;
     {
-        let mut bw1 = BitWriter::<BE>::new(&mut buf1);
+        let mut bw1 = BitWriter::endian(&mut buf1, BigEndian);
         // uleb128()
         let mut coded_payload_length = [0 as u8; 8];
         let leb_size = aom_uleb_encode(obu_payload_size, &mut coded_payload_length);
@@ -1660,7 +1672,9 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
         pred_cfl_params: CFLParams::new(),
         ref_frame: INTRA_FRAME,
         mv: MotionVector { row: 0, col: 0},
-        skip: false
+        skip: false,
+        tx_size: TxSize::TX_4X4,
+        tx_type: TxType::DCT_DCT,
     }; // Best decision that is not PARTITION_SPLIT
 
     let hbs = bs >> 1; // Half the block size in blocks
@@ -1689,13 +1703,16 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
         let mv = mode_decision.mv;
         let skip = mode_decision.skip;
         let mut cdef_coded = cw.bc.cdef_coded;
+        let (tx_size, tx_type) = (mode_decision.tx_size, mode_decision.tx_type);
+
+        debug_assert!((tx_size, tx_type) ==
+            rdo_tx_size_type(seq, fi, fs, cw, bsize, bo, mode_luma, ref_frame, mv, skip));
+        cw.bc.set_tx_size(bo, tx_size);
+
         rd_cost = mode_decision.rd_cost + cost;
 
         let mut mv_stack = Vec::new();
-        let mode_context = cw.find_mvrefs(bo, ref_frame, &mut mv_stack, bsize, false);
-
-        let (tx_size, tx_type) =
-          rdo_tx_size_type(seq, fi, fs, cw, bsize, bo, mode_luma, ref_frame, mv, skip);
+        let mode_context = cw.find_mvrefs(bo, ref_frame, &mut mv_stack, bsize, false, fi);
 
         cdef_coded = encode_block_a(seq, cw, if cdef_coded  {w_post_cdef} else {w_pre_cdef},
                                    bsize, bo, skip);
@@ -1768,12 +1785,14 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
             let mv = best_decision.mv;
             let skip = best_decision.skip;
             let mut cdef_coded = cw.bc.cdef_coded;
+            let (tx_size, tx_type) = (best_decision.tx_size, best_decision.tx_type);
+
+            debug_assert!((tx_size, tx_type) ==
+                rdo_tx_size_type(seq, fi, fs, cw, bsize, bo, mode_luma, ref_frame, mv, skip));
+            cw.bc.set_tx_size(bo, tx_size);
 
             let mut mv_stack = Vec::new();
-            let mode_context = cw.find_mvrefs(bo, ref_frame, &mut mv_stack, bsize, false);
-
-            let (tx_size, tx_type) =
-                rdo_tx_size_type(seq, fi, fs, cw, bsize, bo, mode_luma, ref_frame, mv, skip);
+            let mode_context = cw.find_mvrefs(bo, ref_frame, &mut mv_stack, bsize, false, fi);
 
             cdef_coded = encode_block_a(seq, cw, if cdef_coded {w_post_cdef} else {w_pre_cdef},
                                        bsize, bo, skip);
@@ -1859,11 +1878,14 @@ fn encode_partition_topdown(seq: &Sequence, fi: &FrameInvariants, fs: &mut Frame
             let mv = part_decision.mv;
             let mut cdef_coded = cw.bc.cdef_coded;
 
+            // NOTE: Cannot avoid calling rdo_tx_size_type() here again,
+            // because, with top-down partition RDO, the neighnoring contexts
+            // of current partition can change, i.e. neighboring partitions can split down more.
             let (tx_size, tx_type) =
                 rdo_tx_size_type(seq, fi, fs, cw, bsize, bo, mode_luma, ref_frame, mv, skip);
 
             let mut mv_stack = Vec::new();
-            let mode_context = cw.find_mvrefs(bo, ref_frame, &mut mv_stack, bsize, false);
+            let mode_context = cw.find_mvrefs(bo, ref_frame, &mut mv_stack, bsize, false, fi);
 
             if !mode_luma.is_intra() && mode_luma != PredictionMode::GLOBALMV {
               mode_luma = PredictionMode::NEWMV;
@@ -2008,7 +2030,7 @@ fn write_tile_group_header(tile_start_and_end_present_flag: bool) ->
     Vec<u8> {
     let mut buf = Vec::new();
     {
-        let mut bw = BitWriter::<BE>::new(&mut buf);
+        let mut bw = BitWriter::endian(&mut buf, BigEndian);
         bw.write_bit(tile_start_and_end_present_flag).unwrap();
         bw.byte_align().unwrap();
     }
@@ -2020,13 +2042,27 @@ pub fn encode_frame(sequence: &mut Sequence, fi: &mut FrameInvariants, fs: &mut 
     if fi.show_existing_frame {
         //write_uncompressed_header(&mut packet, sequence, fi).unwrap();
         write_obus(&mut packet, sequence, fi, fs).unwrap();
-        match fi.rec_buffer.frames[0] {
+        match fi.rec_buffer.frames[fi.frame_to_show_map_idx as usize] {
             Some(ref rec) => for p in 0..3 {
                 fs.rec.planes[p].data.copy_from_slice(rec.frame.planes[p].data.as_slice());
             },
             None => (),
         }
     } else {
+        if !fi.intra_only {
+            for i in 0..INTER_REFS_PER_FRAME {
+                fi.ref_frame_sign_bias[i] =
+                if !sequence.enable_order_hint {
+                    false
+                } else if let Some(ref rec) = fi.rec_buffer.frames[fi.ref_frames[i]] {
+                    let hint = rec.order_hint;
+                    sequence.get_relative_dist(hint, fi.order_hint) > 0
+                } else {
+                    false
+                };
+            }
+        }
+
         let bit_depth = sequence.bit_depth;
         let tile = encode_tile(sequence, fi, fs, bit_depth); // actually tile group
 
@@ -2034,7 +2070,7 @@ pub fn encode_frame(sequence: &mut Sequence, fi: &mut FrameInvariants, fs: &mut 
         write_obus(&mut packet, sequence, fi, fs).unwrap();
         let mut buf1 = Vec::new();
         {
-            let mut bw1 = BitWriter::<BE>::new(&mut buf1);
+            let mut bw1 = BitWriter::endian(&mut buf1, BigEndian);
             bw1.write_obu_header(OBU_Type::OBU_TILE_GROUP, 0).unwrap();
         }
         packet.write(&buf1).unwrap();
@@ -2042,7 +2078,7 @@ pub fn encode_frame(sequence: &mut Sequence, fi: &mut FrameInvariants, fs: &mut 
 
         let obu_payload_size = tile.len() as u64;
         {
-            let mut bw1 = BitWriter::<BE>::new(&mut buf1);
+            let mut bw1 = BitWriter::endian(&mut buf1, BigEndian);
             // uleb128()
             let mut coded_payload_length = [0 as u8; 8];
             let leb_size = aom_uleb_encode(obu_payload_size, &mut coded_payload_length);

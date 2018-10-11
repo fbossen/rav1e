@@ -54,7 +54,9 @@ pub struct RDOPartitionOutput {
   pub pred_cfl_params: CFLParams,
   pub ref_frame: usize,
   pub mv: MotionVector,
-  pub skip: bool
+  pub skip: bool,
+  pub tx_size: TxSize,
+  pub tx_type: TxType,
 }
 
 #[allow(unused)]
@@ -307,6 +309,8 @@ pub fn rdo_mode_decision(
 
   if fi.frame_type == FrameType::INTER {
     for i in LAST_FRAME..NONE_FRAME {
+      // Don't search LAST3 since it's used only for probs
+      if i == LAST3_FRAME { continue; }
       if !ref_slot_set.contains(&fi.ref_frames[i - LAST_FRAME]) {
         ref_frame_set.push(i);
         ref_slot_set.push(fi.ref_frames[i - LAST_FRAME]);
@@ -321,7 +325,7 @@ pub fn rdo_mode_decision(
 
   for (i, &ref_frame) in ref_frame_set.iter().enumerate() {
     let mut mvs: Vec<CandidateMV> = Vec::new();
-    mode_contexts.push(cw.find_mvrefs(bo, ref_frame, &mut mvs, bsize, false));
+    mode_contexts.push(cw.find_mvrefs(bo, ref_frame, &mut mvs, bsize, false, fi));
 
     if fi.frame_type == FrameType::INTER {
       for &x in RAV1E_INTER_MODES_MINIMAL {
@@ -342,7 +346,7 @@ pub fn rdo_mode_decision(
   let luma_rdo = |luma_mode: PredictionMode, fs: &mut FrameState, cw: &mut ContextWriter, best: &mut EncodingSettings,
     mv: MotionVector, ref_frame: usize, mode_set_chroma: &[PredictionMode], luma_mode_is_intra: bool,
     mode_context: usize, mv_stack: &Vec<CandidateMV>| {
-    let (tx_size, tx_type) = rdo_tx_size_type(
+    let (tx_size, mut tx_type) = rdo_tx_size_type(
       seq, fi, fs, cw, bsize, bo, luma_mode, ref_frame, mv, false,
     );
 
@@ -351,6 +355,8 @@ pub fn rdo_mode_decision(
       mode_set_chroma.iter().for_each(|&chroma_mode| {
         let wr: &mut dyn Writer = &mut WriterCounter::new();
         let tell = wr.tell_frac();
+
+        if skip { tx_type = TxType::DCT_DCT; };
 
         encode_block_a(seq, cw, wr, bsize, bo, skip);
         encode_block_b(
@@ -535,7 +541,9 @@ pub fn rdo_mode_decision(
       ref_frame: best.ref_frame,
       mv: best.mv,
       rd_cost: best.rd,
-      skip: best.skip
+      skip: best.skip,
+      tx_size: best.tx_size,
+      tx_type: best.tx_type,
     }]
   }
 }

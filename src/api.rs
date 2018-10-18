@@ -265,7 +265,7 @@ impl Context {
         } as u8) & 7;
       }
 
-      self.fi.reference_mode = if multiref && reorder && idx_in_group != 0 {
+      self.fi.reference_mode = if multiref && reorder && idx_in_group != 0 && false {
         ReferenceMode::SELECT
       } else {
         ReferenceMode::SINGLE

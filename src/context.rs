@@ -2420,6 +2420,8 @@ impl ContextWriter {
             mv_stack.push(mv_cand);
           }
         }
+
+        assert!(mv_stack.len() == 2);
       }
     }
 

@@ -10,6 +10,7 @@
 use context::CDFContext;
 use encoder::*;
 use partition::*;
+use plane::*;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -176,7 +177,7 @@ impl Context {
   pub fn frame_properties(&mut self, idx: u64) -> bool {
     let key_frame_interval: u64 = 30;
 
-    let reorder = false;
+    let reorder = true;
     let multiref = reorder || self.fi.config.speed <= 2;
 
     let pyramid_depth = if reorder { 2 } else { 0 };
@@ -289,6 +290,8 @@ impl Context {
 
       let mut fs = FrameState {
         input: Arc::new(Frame::new(self.fi.padded_w, self.fi.padded_h)), // dummy
+        input_hres: Plane::new(self.fi.padded_w/2, self.fi.padded_h/2, 1, 1, (128+8)/2, (128+8)/2),
+        input_qres: Plane::new(self.fi.padded_w/4, self.fi.padded_h/4, 2, 2, (128+8)/4, (128+8)/4),
         rec: Frame::new(self.fi.padded_w, self.fi.padded_h),
         qc: Default::default(),
         cdfs: CDFContext::new(0),
@@ -308,6 +311,8 @@ impl Context {
         if let Some(frame) = f {
           let mut fs = FrameState {
             input: frame,
+            input_hres: Plane::new(self.fi.padded_w/2, self.fi.padded_h/2, 1, 1, (128+8)/2, (128+8)/2),
+            input_qres: Plane::new(self.fi.padded_w/4, self.fi.padded_h/4, 2, 2, (128+8)/4, (128+8)/4),
             rec: Frame::new(self.fi.padded_w, self.fi.padded_h),
             qc: Default::default(),
             cdfs: CDFContext::new(0),

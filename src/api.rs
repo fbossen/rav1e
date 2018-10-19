@@ -177,7 +177,7 @@ impl Context {
   pub fn frame_properties(&mut self, idx: u64) -> bool {
     let key_frame_interval: u64 = 30;
 
-    let reorder = true;
+    let reorder = false;
     let multiref = reorder || self.fi.config.speed <= 2;
 
     let pyramid_depth = if reorder { 2 } else { 0 };

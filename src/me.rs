@@ -140,11 +140,11 @@ pub fn motion_estimation(
 
 pub fn estimate_motion_ss4(
   fi: &FrameInvariants, fs: &FrameState, ref_idx: usize, bo: &BlockOffset
-) -> Option<MotionVector> {
+) -> [Option<MotionVector>; 5] {
   if let Some(ref rec) = fi.rec_buffer.frames[ref_idx] {
     let po = PlaneOffset {
-      x: (bo.x as isize).min(fi.w_in_b as isize - 64/4) << BLOCK_TO_PLANE_SHIFT >> 2,
-      y: (bo.y as isize).min(fi.h_in_b as isize - 64/4) << BLOCK_TO_PLANE_SHIFT >> 2
+      x: (bo.x as isize).min(fi.w_in_b as isize - 32/4) << BLOCK_TO_PLANE_SHIFT >> 2,
+      y: (bo.y as isize).min(fi.h_in_b as isize - 32/4) << BLOCK_TO_PLANE_SHIFT >> 2
     };
     let range = 64 * fi.me_range_scale as isize;
     let blk_w = 64;
@@ -160,29 +160,44 @@ pub fn estimate_motion_ss4(
     let y_lo = po.y + (((-range).max(mvy_min / 8)) >> 2);
     let y_hi = po.y + (((range).min(mvy_max / 8)) >> 2);
 
-    let mut lowest_sad = 16 * 16 * 4096 as u32;
-    let mut best_mv = MotionVector { row: 0, col: 0 };
+    let mut lowest_sad = [16 * 16 * 4096 as u32; 5];
+    let mut best_mv: [Option<MotionVector>; 5] = [None; 5];
 
     for y in y_lo..y_hi {
       for x in x_lo..x_hi {
         let plane_org = fs.input_qres.slice(&po);
         let plane_ref = rec.input_qres.slice(&PlaneOffset { x, y });
+        let sad0 = get_sad(&plane_org, &plane_ref, blk_h >> 3, blk_w >> 3);
 
-        let sad = get_sad(&plane_org, &plane_ref, blk_h >> 2, blk_w >> 2);
+        let plane_org = fs.input_qres.slice(&PlaneOffset { x: po.x + (blk_w as isize >> 3), y: po.y });
+        let plane_ref = rec.input_qres.slice(&PlaneOffset { x: x + (blk_w as isize >> 3), y: y });
+        let sad1 = get_sad(&plane_org, &plane_ref, blk_h >> 3, blk_w >> 3);
 
-        if sad < lowest_sad {
-          lowest_sad = sad;
-          best_mv = MotionVector {
-            row: 32 * (y as i16 - po.y as i16),
-            col: 32 * (x as i16 - po.x as i16)
+        let plane_org = fs.input_qres.slice(&PlaneOffset { x: po.x, y: po.y + (blk_h as isize >> 3) });
+        let plane_ref = rec.input_qres.slice(&PlaneOffset { x: x, y: y + (blk_h as isize >> 3) });
+        let sad2 = get_sad(&plane_org, &plane_ref, blk_h >> 3, blk_w >> 3);
+
+        let plane_org = fs.input_qres.slice(&PlaneOffset { x: po.x + (blk_w as isize >> 3), y: po.y + (blk_h as isize >> 3) });
+        let plane_ref = rec.input_qres.slice(&PlaneOffset { x: x + (blk_w as isize >> 3), y: y + (blk_h as isize >> 3) });
+        let sad3 = get_sad(&plane_org, &plane_ref, blk_h >> 3, blk_w >> 3);
+
+        let sad = [sad0 + sad1 + sad2 + sad3, sad0, sad1, sad2, sad3];
+
+        for i in 0..5 {
+          if sad[i] < lowest_sad[i] {
+            lowest_sad[i] = sad[i];
+            best_mv[i] = Some(MotionVector {
+              row: 32 * (y as i16 - po.y as i16),
+              col: 32 * (x as i16 - po.x as i16)
+            });
           }
         }
       }
     }
 
-    Some(best_mv)
+    best_mv
   } else {
-    None
+    [None; 5]
   }
 }
 

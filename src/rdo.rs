@@ -399,8 +399,12 @@ pub fn rdo_mode_decision(
     mode_contexts.push(cw.find_mvrefs(bo, &ref_frames, &mut mv_stack, bsize, false, fi, false));
 
     if fi.frame_type == FrameType::INTER {
-      for &x in RAV1E_INTER_MODES_MINIMAL {
-        mode_set.push((x, i));
+      mode_set.push((PredictionMode::GLOBALMV, i));
+      if mv_stack.len() >= 1 {
+        mode_set.push((PredictionMode::NEARESTMV, i));
+      }
+      if mv_stack.len() >= 2 {
+        mode_set.push((PredictionMode::NEAR0MV, i));
       }
       if fi.config.speed <= 2 {
         if mv_stack.len() >= 3 {
@@ -410,6 +414,7 @@ pub fn rdo_mode_decision(
           mode_set.push((PredictionMode::NEAR2MV, i));
         }
       }
+      mode_set.push((PredictionMode::NEWMV, i))
     }
     mv_stacks.push(mv_stack);
   }

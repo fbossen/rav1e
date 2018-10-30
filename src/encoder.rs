@@ -468,7 +468,7 @@ impl FrameInvariants {
         // with exception that SBs on right or bottom frame borders split down to BLOCK_4X4.
         // At speed = 0, RDO search is exhaustive.
         let mut min_partition_size = if config.speed <= 1 { BlockSize::BLOCK_4X4 }
-                                 else if config.speed <= 2 { BlockSize::BLOCK_8X8 }
+                                 //else if config.speed <= 2 { BlockSize::BLOCK_8X8 }
                                  else if config.speed <= 3 { BlockSize::BLOCK_16X16 }
                                  else { BlockSize::BLOCK_32X32 };
 

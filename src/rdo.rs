@@ -399,10 +399,8 @@ pub fn rdo_mode_decision(
     mode_contexts.push(cw.find_mvrefs(bo, &ref_frames, &mut mv_stack, bsize, false, fi, false));
 
     if fi.frame_type == FrameType::INTER {
+      mode_set.push((PredictionMode::GLOBALMV, i));
       mode_set.push((PredictionMode::NEARESTMV, i));
-      if mv_stack.len() >= 1 {
-        mode_set.push((PredictionMode::GLOBALMV, i));
-      }
       if mv_stack.len() >= 2 {
         mode_set.push((PredictionMode::NEAR0MV, i));
       }

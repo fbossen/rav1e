@@ -406,7 +406,8 @@ pub fn rdo_mode_decision(
       if mv_stack.len() >= 2 {
         mode_set.push((PredictionMode::NEAR0MV, i));
       }
-      if fi.config.speed <= 2 {
+      let include_near_mvs = fi.config.speed <= 2;
+      if include_near_mvs {
         if mv_stack.len() >= 3 {
           mode_set.push((PredictionMode::NEAR1MV, i));
         }
@@ -414,7 +415,10 @@ pub fn rdo_mode_decision(
           mode_set.push((PredictionMode::NEAR2MV, i));
         }
       }
-      mode_set.push((PredictionMode::NEWMV, i))
+      if !mv_stack.iter().take(if include_near_mvs {4} else {2})
+        .any(|ref x| x.this_mv.row == mvs_from_me[i][0].row && x.this_mv.col == mvs_from_me[i][0].col) {
+        mode_set.push((PredictionMode::NEWMV, i));
+      }
     }
     mv_stacks.push(mv_stack);
   }

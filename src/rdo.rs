@@ -402,7 +402,7 @@ pub fn rdo_mode_decision(
       for &x in RAV1E_INTER_MODES_MINIMAL {
         mode_set.push((x, i));
       }
-      if fi.config.speed <= 2 {
+      if fi.config.speed <= 1 {
         if mv_stack.len() >= 3 {
           mode_set.push((PredictionMode::NEAR1MV, i));
         }

@@ -181,7 +181,7 @@ impl Context {
     let key_frame_interval: u64 = self.fi.config.key_frame_interval;
 
     let reorder = !self.fi.config.low_latency;
-    let multiref = reorder || self.fi.config.speed <= 2;
+    let multiref = reorder || self.fi.config.speed <= 1;
 
     let pyramid_depth = if reorder { 2 } else { 0 };
     let group_src_len = 1 << pyramid_depth;

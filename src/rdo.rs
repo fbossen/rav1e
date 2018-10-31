@@ -356,7 +356,7 @@ pub fn rdo_mode_decision(
   // Exclude complex prediction modes at higher speed levels
   let intra_mode_set = if (fi.frame_type == FrameType::KEY
     && fi.config.speed <= 3)
-    || (fi.frame_type == FrameType::INTER && fi.config.speed <= 1)
+    || (fi.frame_type == FrameType::INTER && fi.config.speed <= 3)
   {
     RAV1E_INTRA_MODES
   } else {

@@ -1,6 +1,7 @@
 The fastest and safest AV1 encoder.
 
 [![Build Status](https://travis-ci.org/xiph/rav1e.svg?branch=master)](https://travis-ci.org/xiph/rav1e)
+[![Coverage Status](https://coveralls.io/repos/github/xiph/rav1e/badge.svg?branch=master)](https://coveralls.io/github/xiph/rav1e?branch=master)
 
 # Overview
 
@@ -33,13 +34,13 @@ git submodule update --init
 
 This is also required every time you switch branches or pull a submodule change.
 
-In order to build, test and link to the codec on UNIX, you need Perl, Yasm, CMake, Clang and pkg-config. To install this on Ubuntu or Linux Mint, run:
+In order to build, test and link to the codec on UNIX, you need Perl, NASM, CMake, Clang and pkg-config. To install this on Ubuntu or Linux Mint, run:
 
 ```
-sudo apt install perl yasm cmake clang pkg-config
+sudo apt install perl nasm cmake clang pkg-config
 ```
 
-On Windows, pkg-config is not required. A Perl distribution such as Strawberry Perl, CMake, and a Yasm binary in your system PATH are required.
+On Windows, pkg-config is not required. A Perl distribution such as Strawberry Perl, CMake, and a NASM binary in your system PATH are required.
 
 # Compressing video
 
@@ -85,7 +86,7 @@ https://arewecompressedyet.com/analyzer/?d=https://people.xiph.org/~mbebenita/an
 * src/predict.rs - Intra prediction implementations.
 * src/quantize.rs - Quantization and dequantization functions for coefficients.
 * src/rdo.rs - RDO-related structures and distortion computation functions.
-* src/transform.rs - Implementations of DCT and ADST transforms.
+* src/transform/*.rs - Implementations of DCT and ADST transforms.
 * src/util.rs - Misc utility code.
 * src/bin/rav1e.rs - rav1e command line tool.
 * src/bin/rav1erepl.rs - Command line tool for debugging.

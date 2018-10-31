@@ -16,13 +16,14 @@ ignore = [
     # "src/ec.rs", # Clean
     "src/lib.rs", # Did not clean yet to avoid conflicts with open PRs.
     "src/cdef.rs", # Did not try to clean yet.
+    "src/lrf.rs", # Did not try to clean yet.
     # "src/deblock.rs", # Clean
     # "src/partition.rs", # Clean
     # "src/plane.rs", # Clean
     # "src/predict.rs", # Clean
     # "src/quantize.rs", # Clean
     # "src/rdo.rs", # Clean
-    # "src/transform.rs", # Clean
+    # "src/transform/mod.rs", # Clean
     # "benches/bench.rs", # Clean
     # "src/bin/rav1e.rs", # Clean
     # "src/bin/rav1repl.rs", # Clean

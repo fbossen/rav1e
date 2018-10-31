@@ -7,7 +7,6 @@
 // Media Patent License 1.0 was not distributed with this source code in the
 // PATENTS file, you can obtain it at www.aomedia.org/license/patent.
 
-use context::CDFContext;
 use encoder::*;
 use partition::*;
 
@@ -31,6 +30,8 @@ impl Ratio {
 
 #[derive(Copy, Clone, Debug)]
 pub struct EncoderConfig {
+  pub key_frame_interval: u64,
+  pub low_latency: bool,
   pub quantizer: usize,
   pub speed: usize,
   pub tune: Tune
@@ -38,7 +39,7 @@ pub struct EncoderConfig {
 
 impl Default for EncoderConfig {
   fn default() -> Self {
-    EncoderConfig { quantizer: 100, speed: 0, tune: Tune::Psnr }
+    EncoderConfig { key_frame_interval: 30, low_latency: true, quantizer: 100, speed: 0, tune: Tune::Psnr  }
   }
 }
 
@@ -63,10 +64,12 @@ impl Config {
   pub fn parse(&mut self, key: &str, value: &str) -> Result<(), EncoderStatus> {
     use self::EncoderStatus::*;
     match key {
-        "quantizer" => self.enc.quantizer = value.parse().map_err(|_e| ParseError)?,
-        "speed" => self.enc.speed = value.parse().map_err(|_e| ParseError)?,
-        "tune" => self.enc.tune = value.parse().map_err(|_e| ParseError)?,
-        _ => return Err(InvalidKey)
+      "low_latency" => self.enc.low_latency = value.parse().map_err(|_e| ParseError)?,
+      "key_frame_interval" => self.enc.key_frame_interval = value.parse().map_err(|_e| ParseError)?,
+      "quantizer" => self.enc.quantizer = value.parse().map_err(|_e| ParseError)?,
+      "speed" => self.enc.speed = value.parse().map_err(|_e| ParseError)?,
+      "tune" => self.enc.tune = value.parse().map_err(|_e| ParseError)?,
+      _ => return Err(InvalidKey)
     }
 
     Ok(())
@@ -85,7 +88,7 @@ impl Config {
       aom_dsp_rtcd();
     }
 
-    Context { fi, seq, frame_count: 0, idx: 0, frame_q: BTreeMap::new() }
+    Context { fi, seq, frame_count: 0, idx: 0, frame_q: BTreeMap::new(), packet_data: Vec::new() }
   }
 }
 
@@ -95,7 +98,8 @@ pub struct Context {
   //    timebase: Ratio,
   frame_count: u64,
   idx: u64,
-  frame_q: BTreeMap<u64, Option<Arc<Frame>>> //    packet_q: VecDeque<Packet>
+  frame_q: BTreeMap<u64, Option<Arc<Frame>>>, //    packet_q: VecDeque<Packet>
+  packet_data: Vec<u8>
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -174,12 +178,12 @@ impl Context {
   }
 
   pub fn frame_properties(&mut self, idx: u64) -> bool {
-    let key_frame_interval: u64 = 30;
+    let key_frame_interval: u64 = self.fi.config.key_frame_interval;
 
-    let reorder = false;
+    let reorder = !self.fi.config.low_latency;
     let multiref = reorder || self.fi.config.speed <= 2;
 
-    let pyramid_depth = if reorder { 1 } else { 0 };
+    let pyramid_depth = if reorder { 2 } else { 0 };
     let group_src_len = 1 << pyramid_depth;
     let group_len = group_src_len + if reorder { pyramid_depth } else { 0 };
     let segment_len = 1 + (key_frame_interval - 1 + group_src_len - 1) / group_src_len * group_len;
@@ -241,7 +245,6 @@ impl Context {
       let q_drop = 15 * lvl as usize;
       self.fi.base_q_idx = (self.fi.config.quantizer.min(255 - q_drop) + q_drop) as u8;
 
-      let first_ref_frame = LAST_FRAME;
       let second_ref_frame = if !multiref {
         NONE_FRAME
       } else if !reorder || idx_in_group == 0 {
@@ -253,17 +256,25 @@ impl Context {
 
       self.fi.primary_ref_frame = (ref_in_previous_group - LAST_FRAME) as u32;
 
+      assert!(group_src_len <= REF_FRAMES as u64);
       for i in 0..INTER_REFS_PER_FRAME {
-        self.fi.ref_frames[i] = if i == second_ref_frame - LAST_FRAME {
-          (slot_idx as u64 + if lvl == 0 { 6 * group_src_len } else { group_src_len >> lvl }) & 7
+        self.fi.ref_frames[i] = (slot_idx as u8 +
+        if i == second_ref_frame - LAST_FRAME {
+          if lvl == 0 { (REF_FRAMES as u64 - 2) * group_src_len } else { group_src_len >> lvl }
         } else if i == ref_in_previous_group - LAST_FRAME {
-          (slot_idx as u64 - group_src_len) & 7
+          REF_FRAMES as u64 - group_src_len
         } else {
-          (slot_idx as u64 - (group_src_len >> lvl)) & 7
-        } as usize;
+          REF_FRAMES as u64 - (group_src_len >> lvl)
+        } as u8) & 7;
       }
 
+      self.fi.reference_mode = if multiref && reorder && idx_in_group != 0 {
+        ReferenceMode::SELECT
+      } else {
+        ReferenceMode::SINGLE
+      };
       self.fi.number = segment_idx * key_frame_interval + self.fi.order_hint as u64;
+      self.fi.me_range_scale = (group_src_len >> lvl) as u8;
     }
 
     true
@@ -279,13 +290,7 @@ impl Context {
     if self.fi.show_existing_frame {
       self.idx = self.idx + 1;
 
-      let mut fs = FrameState {
-        input: Arc::new(Frame::new(self.fi.padded_w, self.fi.padded_h)), // dummy
-        rec: Frame::new(self.fi.padded_w, self.fi.padded_h),
-        qc: Default::default(),
-        cdfs: CDFContext::new(0),
-        deblock: Default::default(),
-      };
+      let mut fs = FrameState::new(&self.fi);
 
       let data = encode_frame(&mut self.seq, &mut self.fi, &mut fs);
 
@@ -298,15 +303,10 @@ impl Context {
         self.idx = self.idx + 1;
 
         if let Some(frame) = f {
-          let mut fs = FrameState {
-            input: frame,
-            rec: Frame::new(self.fi.padded_w, self.fi.padded_h),
-            qc: Default::default(),
-            cdfs: CDFContext::new(0),
-            deblock: Default::default(),
-          };
+          let mut fs = FrameState::new_with_frame(&self.fi, frame);
 
           let data = encode_frame(&mut self.seq, &mut self.fi, &mut fs);
+          self.packet_data.extend(data);
 
           fs.rec.pad();
 
@@ -315,7 +315,13 @@ impl Context {
 
           update_rec_buffer(&mut self.fi, fs);
 
-          Ok(Packet { data, rec, number: self.fi.number, frame_type: self.fi.frame_type })
+          if self.fi.show_frame {
+            let data = self.packet_data.clone();
+            self.packet_data = Vec::new();
+            Ok(Packet { data, rec, number: self.fi.number, frame_type: self.fi.frame_type })
+          } else {
+            Err(EncoderStatus::NeedMoreData)
+          }
         } else {
           Err(EncoderStatus::NeedMoreData)
         }

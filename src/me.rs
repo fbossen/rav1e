@@ -57,7 +57,7 @@ pub fn motion_estimation(
         x: (bo.x as isize) << BLOCK_TO_PLANE_SHIFT,
         y: (bo.y as isize) << BLOCK_TO_PLANE_SHIFT
       };
-      let range = 16;
+      let range = 8;
       let blk_w = bsize.width();
       let blk_h = bsize.height();
       let (mvx_min, mvx_max, mvy_min, mvy_max) = get_mv_range(fi, bo, blk_w, blk_h);
@@ -71,13 +71,13 @@ pub fn motion_estimation(
 
       full_search(
         x_lo, x_hi, y_lo, y_hi, blk_h, blk_w,
-        &fs.input.planes[0], &rec.frame.planes[0], &mut best_mv, &mut lowest_sad, &po, 2
+        &fs.input.planes[0], &rec.frame.planes[0], &mut best_mv, &mut lowest_sad, &po, 1
       );
 
       let mode = PredictionMode::NEWMV;
       let mut tmp_plane = Plane::new(blk_w, blk_h, 0, 0, 0, 0);
 
-      let mut steps = vec![8, 4, 2];
+      let mut steps = vec![4, 2];
       if fi.allow_high_precision_mv {
         steps.push(1);
       }

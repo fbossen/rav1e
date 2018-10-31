@@ -1832,7 +1832,7 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
     // Always split if the current partition is too large
     let must_split = bo.x + bs as usize > fi.w_in_b ||
         bo.y + bs as usize > fi.h_in_b ||
-        bsize >= BlockSize::BLOCK_64X64;
+        bsize > BlockSize::BLOCK_64X64;
 
     // must_split overrides the minimum partition size when applicable
     let can_split = bsize > fi.min_partition_size || must_split;
@@ -2012,7 +2012,7 @@ fn encode_partition_topdown(seq: &Sequence, fi: &FrameInvariants, fs: &mut Frame
     // Always split if the current partition is too large
     let must_split = bo.x + bs as usize > fi.w_in_b ||
         bo.y + bs as usize > fi.h_in_b ||
-        bsize >= BlockSize::BLOCK_64X64;
+        bsize > BlockSize::BLOCK_64X64;
 
     let mut rdo_output = block_output.clone().unwrap_or(RDOOutput {
         part_type: PartitionType::PARTITION_INVALID,

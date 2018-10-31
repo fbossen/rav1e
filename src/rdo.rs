@@ -416,7 +416,8 @@ pub fn rdo_mode_decision(
         }
       }
       if !mv_stack.iter().take(if include_near_mvs {4} else {2})
-        .any(|ref x| x.this_mv.row == mvs_from_me[i][0].row && x.this_mv.col == mvs_from_me[i][0].col) {
+        .any(|ref x| x.this_mv.row == mvs_from_me[i][0].row && x.this_mv.col == mvs_from_me[i][0].col)
+        && (mvs_from_me[i][0].row != 0 || mvs_from_me[i][0].col != 0) {
         mode_set.push((PredictionMode::NEWMV, i));
       }
     }

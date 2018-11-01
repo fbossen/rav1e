@@ -259,7 +259,7 @@ impl Context {
       };
       let ref_in_previous_group = LAST3_FRAME;
 
-      self.fi.primary_ref_frame = (ref_in_previous_group - LAST_FRAME) as u32;
+      self.fi.primary_ref_frame = if lvl > 1 { PRIMARY_REF_NONE } else { (ref_in_previous_group - LAST_FRAME) as u32 };
 
       assert!(group_src_len <= REF_FRAMES as u64);
       for i in 0..INTER_REFS_PER_FRAME {

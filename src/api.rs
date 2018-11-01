@@ -183,7 +183,7 @@ impl Context {
     let reorder = !self.fi.config.low_latency;
     let multiref = reorder || self.fi.config.speed <= 2;
 
-    let pyramid_depth = if reorder { 4 } else { 0 };
+    let pyramid_depth = if reorder { 3 } else { 0 };
     let group_src_len = 1 << pyramid_depth;
     let group_len = group_src_len + if reorder { pyramid_depth } else { 0 };
     let segment_len = 1 + (key_frame_interval - 1 + group_src_len - 1) / group_src_len * group_len;

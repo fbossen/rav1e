@@ -299,13 +299,25 @@ fn adjust_bo(bo: &BlockOffset, fi: &FrameInvariants, blk_w: usize, blk_h: usize)
   }
 }
 
-fn get_mv_rate(a: MotionVector, b: MotionVector, allow_high_precision_mv: bool) -> u32 {
+pub fn get_mv_rate(a: MotionVector, b: MotionVector, allow_high_precision_mv: bool) -> u32 {
   fn diff_to_rate(diff: i16, allow_high_precision_mv: bool) -> u32 {
-    let d = if allow_high_precision_mv { diff } else { diff >> 1 };
-    if d == 0 {
+    // In the following, assume that:
+    // - the cost for mv_joint is the same for all of its 4 possible values. It may thus be
+    //   ignored
+    // - the cost for mv_sign is 1
+    // - the cost for mv_class is equal to the class id plus 1
+    // - the cost for mv_bit is equal to the larger of class id and 1
+    if diff == 0 {
       0
     } else {
-      2 * (16 - d.abs().leading_zeros())
+      let adiff = diff.abs();
+      if adiff <= 16 {
+        // Class 0
+        3 + if allow_high_precision_mv { 3 } else { 2 }
+      } else {
+        let d = (adiff - 1) >> 3;
+        2 * (16 - d.leading_zeros()) + if allow_high_precision_mv { 3 } else { 2 }
+      }
     }
   }
 

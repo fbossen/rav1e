@@ -1591,11 +1591,27 @@ pub fn encode_block_b(seq: &Sequence, fi: &FrameInvariants, fs: &mut FrameState,
                 cw.write_inter_mode(w, luma_mode, mode_context);
             }
 
-            let ref_mv_idx = 0;
+            let mut ref_mv_idx = 0;
             let num_mv_found = mv_stack.len();
 
             if luma_mode == PredictionMode::NEWMV || luma_mode == PredictionMode::NEW_NEWMV {
               if luma_mode == PredictionMode::NEW_NEWMV { assert!(num_mv_found >= 2); }
+
+              // select a reasonable MV predictor
+              let mut best_rate = std::u32::MAX;
+              for (i, mv_cand) in mv_stack.iter().take(3).enumerate() {
+                let mut rate = i as u32;
+                rate = rate + get_mv_rate(mvs[0], mv_cand.this_mv, fi.allow_high_precision_mv);
+                if luma_mode == PredictionMode::NEW_NEWMV {
+                  rate = rate + get_mv_rate(mvs[1], mv_cand.comp_mv, fi.allow_high_precision_mv);
+                }
+
+                if rate < best_rate {
+                  best_rate = rate;
+                  ref_mv_idx = i;
+                }
+              }
+
               for idx in 0..2 {
                 if num_mv_found > idx + 1 {
                   let drl_mode = ref_mv_idx > idx;

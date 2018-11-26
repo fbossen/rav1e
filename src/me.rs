@@ -160,34 +160,39 @@ pub fn motion_estimation(
       let blk_w = bsize.width();
       let blk_h = bsize.height();
       let (mvx_min, mvx_max, mvy_min, mvy_max) = get_mv_range(fi, bo, blk_w, blk_h);
-      let x_lo = po.x + ((-range + (cmv.col / 8) as isize).max(mvx_min / 8));
-      let x_hi = po.x + ((range + (cmv.col / 8) as isize).min(mvx_max / 8));
-      let y_lo = po.y + ((-range + (cmv.row / 8) as isize).max(mvy_min / 8));
-      let y_hi = po.y + ((range + (cmv.row / 8) as isize).min(mvy_max / 8));
 
       let mut lowest_cost = std::u32::MAX;
       let mut best_mv = MotionVector { row: 0, col: 0 };
 
       let lambda = (get_lambda_sqrt(fi, bit_depth) * 128.0) as u32;
 
-      full_search(
-        x_lo,
-        x_hi,
-        y_lo,
-        y_hi,
-        blk_h,
-        blk_w,
-        &fs.input.planes[0],
-        &rec.frame.planes[0],
-        &mut best_mv,
-        &mut lowest_cost,
-        &po,
-        2,
-        bit_depth,
-        lambda,
-        pmv,
-        fi.allow_high_precision_mv
-      );
+      let smvs = [cmv, pmv[0], pmv[1]];
+
+      for cmv in smvs.iter() {
+        let x_lo = po.x + ((-range + (cmv.col / 8) as isize).max(mvx_min / 8));
+        let x_hi = po.x + ((range + (cmv.col / 8) as isize).min(mvx_max / 8));
+        let y_lo = po.y + ((-range + (cmv.row / 8) as isize).max(mvy_min / 8));
+        let y_hi = po.y + ((range + (cmv.row / 8) as isize).min(mvy_max / 8));
+
+        full_search(
+          x_lo,
+          x_hi,
+          y_lo,
+          y_hi,
+          blk_h,
+          blk_w,
+          &fs.input.planes[0],
+          &rec.frame.planes[0],
+          &mut best_mv,
+          &mut lowest_cost,
+          &po,
+          2,
+          bit_depth,
+          lambda,
+          pmv,
+          fi.allow_high_precision_mv
+        );
+      }
 
       let mode = PredictionMode::NEWMV;
       let mut tmp_plane = Plane::new(blk_w, blk_h, 0, 0, 0, 0);

@@ -1591,11 +1591,52 @@ pub fn encode_block_b(seq: &Sequence, fi: &FrameInvariants, fs: &mut FrameState,
                 cw.write_inter_mode(w, luma_mode, mode_context);
             }
 
-            let ref_mv_idx = 0;
+            let mut ref_mv_idx = 0;
             let num_mv_found = mv_stack.len();
+
+            let mv_precision = if fi.force_integer_mv != 0 {
+              MvSubpelPrecision::MV_SUBPEL_NONE
+            } else if fi.allow_high_precision_mv {
+              MvSubpelPrecision::MV_SUBPEL_HIGH_PRECISION
+            } else {
+              MvSubpelPrecision::MV_SUBPEL_LOW_PRECISION
+            };
 
             if luma_mode == PredictionMode::NEWMV || luma_mode == PredictionMode::NEW_NEWMV {
               if luma_mode == PredictionMode::NEW_NEWMV { assert!(num_mv_found >= 2); }
+
+              if num_mv_found > 1 {
+                let cw_checkpoint = cw.checkpoint();
+                let mut lowest_cost = std::u32::MAX;
+
+                for tmp_ref_mv_idx in 0..num_mv_found.min(3) {
+                  let wr: &mut dyn Writer = &mut WriterCounter::new();
+                  let tell = wr.tell_frac();
+                  for idx in 0..2 {
+                    if num_mv_found > idx + 1 {
+                      let drl_mode = tmp_ref_mv_idx > idx;
+                      let ctx: usize = (mv_stack[idx].weight < REF_CAT_LEVEL) as usize
+                        + (mv_stack[idx + 1].weight < REF_CAT_LEVEL) as usize;
+                      cw.write_drl_mode(wr, drl_mode, ctx);
+                      if !drl_mode { break; }
+                    }
+                  }
+
+                  cw.write_mv(wr, mvs[0], mv_stack[tmp_ref_mv_idx].this_mv, mv_precision);
+                  if luma_mode == PredictionMode::NEW_NEWMV {
+                    cw.write_mv(wr, mvs[1], mv_stack[tmp_ref_mv_idx].comp_mv, mv_precision);
+                  }
+
+                  let cost = wr.tell_frac() - tell;
+                  if cost < lowest_cost {
+                    lowest_cost = cost;
+                    ref_mv_idx = tmp_ref_mv_idx;
+                  }
+                  cw.rollback(&cw_checkpoint);
+                }
+                assert!(ref_mv_idx < mv_stack.len());
+              }
+
               for idx in 0..2 {
                 if num_mv_found > idx + 1 {
                   let drl_mode = ref_mv_idx > idx;
@@ -1611,14 +1652,6 @@ pub fn encode_block_b(seq: &Sequence, fi: &FrameInvariants, fs: &mut FrameState,
               [mv_stack[ref_mv_idx].this_mv, mv_stack[ref_mv_idx].comp_mv]
             } else {
               [MotionVector{ row: 0, col: 0 }; 2]
-            };
-
-            let mv_precision = if fi.force_integer_mv != 0 {
-              MvSubpelPrecision::MV_SUBPEL_NONE
-            } else if fi.allow_high_precision_mv {
-              MvSubpelPrecision::MV_SUBPEL_HIGH_PRECISION
-            } else {
-              MvSubpelPrecision::MV_SUBPEL_LOW_PRECISION
             };
 
             if luma_mode == PredictionMode::NEWMV ||

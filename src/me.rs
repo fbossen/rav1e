@@ -156,7 +156,7 @@ pub fn motion_estimation(
         x: (bo.x as isize) << BLOCK_TO_PLANE_SHIFT,
         y: (bo.y as isize) << BLOCK_TO_PLANE_SHIFT
       };
-      let range = 16;
+      let range = 32;
       let blk_w = bsize.width();
       let blk_h = bsize.height();
       let (mvx_min, mvx_max, mvy_min, mvy_max) = get_mv_range(fi, bo, blk_w, blk_h);

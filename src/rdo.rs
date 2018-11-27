@@ -147,7 +147,7 @@ pub fn get_lambda(fi: &FrameInvariants, bit_depth: usize) -> f64 {
 
   // Lambda formula from doc/theoretical_results.lyx in the daala repo
   // Use Q0 quantizer since lambda will be applied to Q0 pixel domain
-  q0 * q0 * std::f64::consts::LN_2 / 6.0 * 1.2
+  q0 * q0 * std::f64::consts::LN_2 / 6.0 * 1.3
 }
 
 pub fn get_lambda_sqrt(fi: &FrameInvariants, bit_depth: usize) -> f64 {

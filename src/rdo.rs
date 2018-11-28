@@ -39,6 +39,7 @@ use Tune;
 use Sequence;
 use encoder::ReferenceMode;
 use api::PredictionModesSetting;
+use encoder::mode_from_motion;
 
 #[derive(Clone)]
 pub struct RDOOutput {
@@ -56,6 +57,7 @@ pub struct RDOPartitionOutput {
   pub pred_cfl_params: CFLParams,
   pub ref_frames: [usize; 2],
   pub mvs: [MotionVector; 2],
+  pub ref_mv_idx: usize,
   pub skip: bool,
   pub tx_size: TxSize,
   pub tx_type: TxType,
@@ -330,6 +332,7 @@ struct EncodingSettings {
   rd: f64,
   ref_frames: [usize; 2],
   mvs: [MotionVector; 2],
+  ref_mv_idx: usize,
   tx_size: TxSize,
   tx_type: TxType
 }
@@ -344,6 +347,7 @@ impl Default for EncodingSettings {
       rd: std::f64::MAX,
       ref_frames: [INTRA_FRAME, NONE_FRAME],
       mvs: [MotionVector { row: 0, col: 0 }; 2],
+      ref_mv_idx: 0,
       tx_size: TxSize::TX_4X4,
       tx_type: TxType::DCT_DCT
     }
@@ -401,7 +405,8 @@ pub fn rdo_mode_decision(
     assert!(ref_frames_set.len() != 0);
   }
 
-  let mut mode_set: Vec<(PredictionMode, usize)> = Vec::new();
+  // Combination of motion vectors and index into ref_frames_set
+  let mut mv_set: Vec<([MotionVector; 2], usize)> = Vec::new();
   let mut mv_stacks = Vec::new();
   let mut mode_contexts = Vec::new();
 
@@ -419,28 +424,31 @@ pub fn rdo_mode_decision(
         MotionVector { row: 0, col: 0 }
       ]);
 
-      for &x in RAV1E_INTER_MODES_MINIMAL {
-        mode_set.push((x, i));
-      }
-      if mv_stack.len() >= 1 {
-        mode_set.push((PredictionMode::NEAR0MV, i));
-      }
-      if mv_stack.len() >= 2 {
-        mode_set.push((PredictionMode::GLOBALMV, i));
-      }
+      let global_mv = MotionVector{ row: 0, col: 0 };
+
       let include_near_mvs = fi.config.speed_settings.include_near_mvs;
-      if include_near_mvs {
-        if mv_stack.len() >= 3 {
-          mode_set.push((PredictionMode::NEAR1MV, i));
-        }
-        if mv_stack.len() >= 4 {
-          mode_set.push((PredictionMode::NEAR2MV, i));
+      if mv_stack.len() == 0 {
+        mv_set.push(([global_mv; 2], i));
+      } else if mv_stack.len() == 1 {
+        mv_set.push(([mv_stack[0].this_mv, mv_stack[0].comp_mv], i));
+        mv_set.push(([global_mv; 2], i));
+      } else {
+        mv_set.push(([mv_stack[0].this_mv, mv_stack[0].comp_mv], i));
+        mv_set.push(([mv_stack[1].this_mv, mv_stack[1].comp_mv], i));
+        mv_set.push(([global_mv; 2], i));
+        if include_near_mvs {
+          if mv_stack.len() >= 3 {
+            mv_set.push(([mv_stack[2].this_mv, mv_stack[2].comp_mv], i));
+          }
+          if mv_stack.len() >= 4 {
+            mv_set.push(([mv_stack[3].this_mv, mv_stack[3].comp_mv], i));
+          }
         }
       }
       if !mv_stack.iter().take(if include_near_mvs {4} else {2})
         .any(|ref x| x.this_mv.row == mvs_from_me[i][0].row && x.this_mv.col == mvs_from_me[i][0].col)
         && (mvs_from_me[i][0].row != 0 || mvs_from_me[i][0].col != 0) {
-        mode_set.push((PredictionMode::NEWMV, i));
+        mv_set.push(([mvs_from_me[i][0], global_mv], i));
       }
     }
     mv_stacks.push(mv_stack);
@@ -454,13 +462,35 @@ pub fn rdo_mode_decision(
       if let Some(r1) = bwdref {
         let ref_frames = [ref_frames_set[r0][0], ref_frames_set[r1][0]];
         ref_frames_set.push(ref_frames);
-        let mv0 = mvs_from_me[r0][0];
-        let mv1 = mvs_from_me[r1][0];
-        mvs_from_me.push([mv0, mv1]);
+        let new_mv0 = mvs_from_me[r0][0];
+        let new_mv1 = mvs_from_me[r1][0];
+        mvs_from_me.push([new_mv0, new_mv1]);
         let mut mv_stack: Vec<CandidateMV> = Vec::new();
         mode_contexts.push(cw.find_mvrefs(bo, ref_frames, &mut mv_stack, bsize, false, fi, true));
+
+        let global_mv = MotionVector{ row: 0, col: 0 };
+        let nearest_mv = if mv_stack.len() > 0 {
+          [mv_stack[0].this_mv, mv_stack[0].comp_mv]
+        } else {
+          [global_mv, global_mv]
+        };
         for &x in RAV1E_INTER_COMPOUND_MODES {
-          mode_set.push((x, ref_frames_set.len() - 1));
+          let mv0 = if x == PredictionMode::GLOBAL_GLOBALMV {
+            global_mv
+          } else if x == PredictionMode::NEAREST_NEARESTMV || x == PredictionMode::NEAREST_NEWMV {
+            nearest_mv[0]
+          } else {
+            new_mv0
+          };
+          let mv1 = if x == PredictionMode::GLOBAL_GLOBALMV {
+            global_mv
+          } else if x == PredictionMode::NEAREST_NEARESTMV || x == PredictionMode::NEW_NEARESTMV {
+            nearest_mv[1]
+          } else {
+            new_mv1
+          };
+
+          mv_set.push(([mv0, mv1], ref_frames_set.len() - 1));
         }
         mv_stacks.push(mv_stack);
       }
@@ -468,7 +498,7 @@ pub fn rdo_mode_decision(
   }
 
   let luma_rdo = |luma_mode: PredictionMode, fs: &mut FrameState, cw: &mut ContextWriter, best: &mut EncodingSettings,
-    mvs: [MotionVector; 2], ref_frames: [usize; 2], mode_set_chroma: &[PredictionMode], luma_mode_is_intra: bool,
+    mvs: [MotionVector; 2], ref_frames: [usize; 2], ref_mv_idx: usize, mode_set_chroma: &[PredictionMode], luma_mode_is_intra: bool,
     mode_context: usize, mv_stack: &Vec<CandidateMV>| {
     let (tx_size, mut tx_type) = rdo_tx_size_type(
       seq, fi, fs, cw, bsize, bo, luma_mode, ref_frames, mvs, false,
@@ -494,6 +524,7 @@ pub fn rdo_mode_decision(
           chroma_mode,
           ref_frames,
           mvs,
+          ref_mv_idx,
           bsize,
           bo,
           skip,
@@ -541,6 +572,7 @@ pub fn rdo_mode_decision(
           best.mode_chroma = chroma_mode;
           best.ref_frames = ref_frames;
           best.mvs = mvs;
+          best.ref_mv_idx = ref_mv_idx;
           best.skip = skip;
           best.tx_size = tx_size;
           best.tx_type = tx_type;
@@ -558,32 +590,17 @@ pub fn rdo_mode_decision(
   };
 
   if fi.frame_type != FrameType::INTER {
-    assert!(mode_set.len() == 0);
+    assert!(mv_set.len() == 0);
   }
 
-  mode_set.iter().for_each(|&(luma_mode, i)| {
-    let mvs = match luma_mode {
-      PredictionMode::NEWMV | PredictionMode::NEW_NEWMV => mvs_from_me[i],
-      PredictionMode::NEARESTMV | PredictionMode::NEAREST_NEARESTMV => if mv_stacks[i].len() > 0 {
-        [mv_stacks[i][0].this_mv, mv_stacks[i][0].comp_mv]
-      } else {
-        [MotionVector { row: 0, col: 0 }; 2]
-      },
-      PredictionMode::NEAR0MV => if mv_stacks[i].len() > 1 {
-        [mv_stacks[i][1].this_mv, mv_stacks[i][1].comp_mv]
-      } else {
-        [MotionVector { row: 0, col: 0 }; 2]
-      },
-      PredictionMode::NEAR1MV | PredictionMode::NEAR2MV =>
-          [mv_stacks[i][luma_mode as usize - PredictionMode::NEAR0MV as usize + 1].this_mv,
-          mv_stacks[i][luma_mode as usize - PredictionMode::NEAR0MV as usize + 1].comp_mv],
-      PredictionMode::NEAREST_NEWMV => [mv_stacks[i][0].this_mv, mvs_from_me[i][1]],
-      PredictionMode::NEW_NEARESTMV => [mvs_from_me[i][0], mv_stacks[i][0].comp_mv],
-      _ => [MotionVector { row: 0, col: 0 }; 2]
-    };
+  mv_set.iter().for_each(|&(mvs, i)| {
+    let is_compound = ref_frames_set[i][1] != NONE_FRAME;
+    let (luma_mode, ref_mv_idx) = mode_from_motion(fi, cw, &mvs, is_compound, &mv_stacks[i]);
+
+    // derive mode from MV!
     let mode_set_chroma = vec![luma_mode];
 
-    luma_rdo(luma_mode, fs, cw, &mut best, mvs, ref_frames_set[i], &mode_set_chroma, false,
+    luma_rdo(luma_mode, fs, cw, &mut best, mvs, ref_frames_set[i], ref_mv_idx, &mode_set_chroma, false,
              mode_contexts[i], &mv_stacks[i]);
   });
 
@@ -591,11 +608,12 @@ pub fn rdo_mode_decision(
     intra_mode_set.iter().for_each(|&luma_mode| {
       let mvs = [MotionVector { row: 0, col: 0 }; 2];
       let ref_frames = [INTRA_FRAME, NONE_FRAME];
+      let ref_mv_idx = 0;
       let mut mode_set_chroma = vec![luma_mode];
       if is_chroma_block && luma_mode != PredictionMode::DC_PRED {
         mode_set_chroma.push(PredictionMode::DC_PRED);
       }
-      luma_rdo(luma_mode, fs, cw, &mut best, mvs, ref_frames, &mode_set_chroma, true,
+      luma_rdo(luma_mode, fs, cw, &mut best, mvs, ref_frames, ref_mv_idx, &mode_set_chroma, true,
                0, &Vec::new());
     });
   }
@@ -627,6 +645,7 @@ pub fn rdo_mode_decision(
       let tell = wr.tell_frac();
 
       encode_block_a(seq, fs, cw, wr, bsize, bo, best.skip);
+      let ref_mv_idx = 0;
       encode_block_b(
         seq,
         fi,
@@ -637,6 +656,7 @@ pub fn rdo_mode_decision(
         chroma_mode,
         best.ref_frames,
         best.mvs,
+        ref_mv_idx,
         bsize,
         bo,
         best.skip,
@@ -691,6 +711,7 @@ pub fn rdo_mode_decision(
       pred_cfl_params: best.cfl_params,
       ref_frames: best.ref_frames,
       mvs: best.mvs,
+      ref_mv_idx: best.ref_mv_idx,
       rd_cost: best.rd,
       skip: best.skip,
       tx_size: best.tx_size,
@@ -912,6 +933,7 @@ pub fn rdo_partition_decision(
                 {
                   let ref_frames = mode_decision.ref_frames;
                   let mvs = mode_decision.mvs;
+                  let ref_mv_idx = mode_decision.ref_mv_idx;
                   let skip = mode_decision.skip;
                   let mut cdef_coded = cw.bc.cdef_coded;
                   let (tx_size, tx_type) = (mode_decision.tx_size, mode_decision.tx_type);
@@ -925,7 +947,7 @@ pub fn rdo_partition_decision(
                   cdef_coded = encode_block_a(seq, fs, cw, if cdef_coded  {w_post_cdef} else {w_pre_cdef},
                                             subsize, bo, skip);
                   encode_block_b(seq, fi, fs, cw, if cdef_coded  {w_post_cdef} else {w_pre_cdef},
-                                mode_luma, mode_chroma, ref_frames, mvs, subsize, bo, skip, seq.bit_depth, cfl,
+                                mode_luma, mode_chroma, ref_frames, mvs, ref_mv_idx, subsize, bo, skip, seq.bit_depth, cfl,
                                 tx_size, tx_type, mode_context, &mv_stack, false);
                 }
                 mode_decision

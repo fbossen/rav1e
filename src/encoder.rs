@@ -1548,10 +1548,177 @@ pub fn encode_block_a(seq: &Sequence, fs: &FrameState,
     cw.bc.cdef_coded
 }
 
+
+pub fn mode_from_motion(
+    fi: &FrameInvariants, cw: &mut ContextWriter,
+    mvs: &[MotionVector; 2], is_compound: bool, mv_stack_in: &[CandidateMV]
+) -> (PredictionMode, usize) {
+    let mut mv_stack = Vec::from(mv_stack_in);
+
+    let global_mv = CandidateMV {
+        this_mv: MotionVector { row: 0, col: 0 },
+        comp_mv: MotionVector { row: 0, col: 0 },
+        weight: 0
+    };
+
+    while mv_stack.len() < 2 {
+        let tmp_mv = global_mv.clone();
+        mv_stack.push(tmp_mv);
+    }
+
+    let modes = if !is_compound {
+        vec![PredictionMode::NEARESTMV, PredictionMode::NEARMV, PredictionMode::GLOBALMV, PredictionMode::NEWMV]
+    } else {
+        vec![PredictionMode::NEAREST_NEARESTMV, PredictionMode::NEAR_NEARMV, PredictionMode::NEAREST_NEWMV,
+        PredictionMode::NEW_NEARESTMV, PredictionMode::NEAR_NEWMV, PredictionMode::NEW_NEARMV,
+        PredictionMode::GLOBAL_GLOBALMV, PredictionMode::NEW_NEWMV]
+    };
+
+    let mut best_mode = PredictionMode::DC_PRED;
+    let mut best_index = 0;
+    let mut lowest_cost = std::u32::MAX;
+
+    let cw_checkpoint = cw.checkpoint();
+
+    for mode in modes {
+        let indices = if mode == PredictionMode::NEARESTMV || mode == PredictionMode::NEAREST_NEWMV ||
+        mode == PredictionMode::NEW_NEARESTMV || mode == PredictionMode::NEAREST_NEARESTMV ||
+        mode == PredictionMode::GLOBALMV || mode == PredictionMode::GLOBAL_GLOBALMV {
+            0..1
+        } else if mode.has_near_mv() {
+            1..mv_stack.len().min(4)
+        } else {
+            0..mv_stack_in.len().min(3).max(1)
+        };
+
+        for index in indices {
+            fn mv_equal(a: MotionVector, b: MotionVector) -> bool {
+                a.row == b.row && a.col == b.col
+            }
+
+            let valid = if mode == PredictionMode::NEARESTMV || mode == PredictionMode::NEAREST_NEWMV {
+                mv_equal(mv_stack[0].this_mv, mvs[0])
+            } else if mode == PredictionMode::NEW_NEARESTMV {
+                mv_equal(mv_stack[0].comp_mv, mvs[1])
+            } else if mode == PredictionMode::NEAREST_NEARESTMV {
+                mv_equal(mv_stack[0].this_mv, mvs[0]) && mv_equal(mv_stack[0].comp_mv, mvs[1])
+            } else if mode == PredictionMode::NEARMV || mode == PredictionMode::NEAR_NEWMV {
+                mv_equal(mv_stack[index].this_mv, mvs[0])
+            } else if mode == PredictionMode::NEW_NEARMV {
+                mv_equal(mv_stack[index].comp_mv, mvs[1])
+            } else if mode == PredictionMode::NEAR_NEARMV {
+                mv_equal(mv_stack[index].this_mv, mvs[0]) && mv_equal(mv_stack[index].comp_mv, mvs[1])
+            } else if mode == PredictionMode::GLOBALMV {
+                mv_equal(global_mv.this_mv, mvs[0])
+            } else if mode == PredictionMode::GLOBAL_GLOBALMV {
+                mv_equal(global_mv.this_mv, mvs[0]) && mv_equal(global_mv.this_mv, mvs[1])
+            } else {
+                true
+            };
+
+            if !valid { continue; }
+
+            let wr: &mut dyn Writer = &mut WriterCounter::new();
+            let tell = wr.tell_frac();
+
+            encode_motion_mode(fi, cw, wr, mv_stack_in, mode, index, mvs);
+
+            let cost = wr.tell_frac() - tell;
+
+            if cost < lowest_cost {
+                lowest_cost = cost;
+                best_mode = mode;
+                best_index = index;
+            }
+            cw.rollback(&cw_checkpoint);
+        }
+    }
+
+    assert!(best_mode != PredictionMode::DC_PRED);
+    (best_mode, best_index)
+}
+
+pub fn encode_motion_mode(
+    fi: &FrameInvariants, cw: &mut ContextWriter, w: &mut dyn Writer,
+    mv_stack: &[CandidateMV], luma_mode: PredictionMode, ref_mv_idx: usize, mvs: &[MotionVector; 2]
+) {
+    let num_mv_found = mv_stack.len();
+
+    if luma_mode == PredictionMode::NEWMV || luma_mode == PredictionMode::NEW_NEWMV {
+        if luma_mode == PredictionMode::NEW_NEWMV { assert!(num_mv_found >= 2); }
+        for idx in 0..2 {
+            if num_mv_found > idx + 1 {
+                let drl_mode = ref_mv_idx > idx;
+                let ctx: usize = (mv_stack[idx].weight < REF_CAT_LEVEL) as usize
+                + (mv_stack[idx + 1].weight < REF_CAT_LEVEL) as usize;
+                cw.write_drl_mode(w, drl_mode, ctx);
+                if !drl_mode { break; }
+            }
+        }
+    }
+
+    let ref_mvs = if num_mv_found > ref_mv_idx {
+        [mv_stack[ref_mv_idx].this_mv, mv_stack[ref_mv_idx].comp_mv]
+    } else {
+        [MotionVector{ row: 0, col: 0 }; 2]
+    };
+
+    let mv_precision = if fi.force_integer_mv != 0 {
+        MvSubpelPrecision::MV_SUBPEL_NONE
+    } else if fi.allow_high_precision_mv {
+        MvSubpelPrecision::MV_SUBPEL_HIGH_PRECISION
+    } else {
+        MvSubpelPrecision::MV_SUBPEL_LOW_PRECISION
+    };
+
+    if luma_mode.has_near_mv() {
+        for idx in 1..3 {
+            if num_mv_found > idx + 1 {
+                let drl_mode = ref_mv_idx > idx;
+                let ctx: usize = (mv_stack[idx].weight < REF_CAT_LEVEL) as usize
+                + (mv_stack[idx + 1].weight < REF_CAT_LEVEL) as usize;
+
+                cw.write_drl_mode(w, drl_mode, ctx);
+                if !drl_mode { break; }
+            }
+        }
+        if luma_mode == PredictionMode::NEARMV || luma_mode == PredictionMode::NEAR_NEARMV
+        || luma_mode == PredictionMode::NEAR_NEWMV {
+            if mv_stack.len() > 1 {
+                assert!(mv_stack[ref_mv_idx].this_mv.row == mvs[0].row);
+                assert!(mv_stack[ref_mv_idx].this_mv.col == mvs[0].col);
+            } else {
+                assert!(0 == mvs[0].row);
+                assert!(0 == mvs[0].col);
+            }
+        }
+    } else if luma_mode == PredictionMode::NEARESTMV {
+        if mv_stack.len() > 0 {
+            assert!(mv_stack[0].this_mv.row == mvs[0].row);
+            assert!(mv_stack[0].this_mv.col == mvs[0].col);
+        } else {
+            assert!(0 == mvs[0].row);
+            assert!(0 == mvs[0].col);
+        }
+    }
+
+    if luma_mode == PredictionMode::NEWMV
+    || luma_mode == PredictionMode::NEW_NEWMV
+    || luma_mode == PredictionMode::NEW_NEARMV
+    || luma_mode == PredictionMode::NEW_NEARESTMV {
+        cw.write_mv(w, mvs[0], ref_mvs[0], mv_precision);
+    }
+    if luma_mode == PredictionMode::NEW_NEWMV
+    || luma_mode == PredictionMode::NEAR_NEWMV
+    || luma_mode == PredictionMode::NEAREST_NEWMV {
+        cw.write_mv(w, mvs[1], ref_mvs[1], mv_precision);
+    }
+}
+
 pub fn encode_block_b(seq: &Sequence, fi: &FrameInvariants, fs: &mut FrameState,
                  cw: &mut ContextWriter, w: &mut dyn Writer,
                  luma_mode: PredictionMode, chroma_mode: PredictionMode,
-                 ref_frames: [usize; 2], mvs: [MotionVector; 2],
+                 ref_frames: [usize; 2], mvs: [MotionVector; 2], ref_mv_idx: usize,
                  bsize: BlockSize, bo: &BlockOffset, skip: bool, bit_depth: usize,
                  cfl: CFLParams, tx_size: TxSize, tx_type: TxType,
                  mode_context: usize, mv_stack: &[CandidateMV], for_rdo_use: bool)
@@ -1591,76 +1758,7 @@ pub fn encode_block_b(seq: &Sequence, fi: &FrameInvariants, fs: &mut FrameState,
                 cw.write_inter_mode(w, luma_mode, mode_context);
             }
 
-            let ref_mv_idx = 0;
-            let num_mv_found = mv_stack.len();
-
-            if luma_mode == PredictionMode::NEWMV || luma_mode == PredictionMode::NEW_NEWMV {
-              if luma_mode == PredictionMode::NEW_NEWMV { assert!(num_mv_found >= 2); }
-              for idx in 0..2 {
-                if num_mv_found > idx + 1 {
-                  let drl_mode = ref_mv_idx > idx;
-                  let ctx: usize = (mv_stack[idx].weight < REF_CAT_LEVEL) as usize
-                    + (mv_stack[idx + 1].weight < REF_CAT_LEVEL) as usize;
-                  cw.write_drl_mode(w, drl_mode, ctx);
-                  if !drl_mode { break; }
-                }
-              }
-            }
-
-            let ref_mvs = if num_mv_found > 0 {
-              [mv_stack[ref_mv_idx].this_mv, mv_stack[ref_mv_idx].comp_mv]
-            } else {
-              [MotionVector{ row: 0, col: 0 }; 2]
-            };
-
-            let mv_precision = if fi.force_integer_mv != 0 {
-              MvSubpelPrecision::MV_SUBPEL_NONE
-            } else if fi.allow_high_precision_mv {
-              MvSubpelPrecision::MV_SUBPEL_HIGH_PRECISION
-            } else {
-              MvSubpelPrecision::MV_SUBPEL_LOW_PRECISION
-            };
-
-            if luma_mode == PredictionMode::NEWMV ||
-                luma_mode == PredictionMode::NEW_NEWMV ||
-                luma_mode == PredictionMode::NEW_NEARESTMV {
-              cw.write_mv(w, mvs[0], ref_mvs[0], mv_precision);
-            }
-            if luma_mode == PredictionMode::NEW_NEWMV ||
-                luma_mode == PredictionMode::NEAREST_NEWMV {
-              cw.write_mv(w, mvs[1], ref_mvs[1], mv_precision);
-            }
-
-            if luma_mode >= PredictionMode::NEAR0MV && luma_mode <= PredictionMode::NEAR2MV {
-              let ref_mv_idx = luma_mode as usize - PredictionMode::NEAR0MV as usize + 1;
-              if luma_mode != PredictionMode::NEAR0MV { assert!(num_mv_found > ref_mv_idx); }
-
-              for idx in 1..3 {
-                if num_mv_found > idx + 1 {
-                  let drl_mode = ref_mv_idx > idx;
-                  let ctx: usize = (mv_stack[idx].weight < REF_CAT_LEVEL) as usize
-                    + (mv_stack[idx + 1].weight < REF_CAT_LEVEL) as usize;
-
-                  cw.write_drl_mode(w, drl_mode, ctx);
-                  if !drl_mode { break; }
-                }
-              }
-              if mv_stack.len() > 1 {
-                assert!(mv_stack[ref_mv_idx].this_mv.row == mvs[0].row);
-                assert!(mv_stack[ref_mv_idx].this_mv.col == mvs[0].col);
-              } else {
-                assert!(0 == mvs[0].row);
-                assert!(0 == mvs[0].col);
-              }
-            } else if luma_mode == PredictionMode::NEARESTMV {
-              if mv_stack.len() > 0 {
-                assert!(mv_stack[0].this_mv.row == mvs[0].row);
-                assert!(mv_stack[0].this_mv.col == mvs[0].col);
-              } else {
-                assert!(0 == mvs[0].row);
-                assert!(0 == mvs[0].col);
-              }
-            }
+            encode_motion_mode(fi, cw, w, mv_stack, luma_mode, ref_mv_idx, &mvs);
         } else {
             cw.write_intra_mode(w, bsize, luma_mode);
         }
@@ -1929,6 +2027,7 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
         pred_cfl_params: CFLParams::new(),
         ref_frames: [INTRA_FRAME, NONE_FRAME],
         mvs: [MotionVector { row: 0, col: 0}; 2],
+        ref_mv_idx: 0,
         skip: false,
         tx_size: TxSize::TX_4X4,
         tx_type: TxType::DCT_DCT,
@@ -1968,6 +2067,7 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
           let ref_frames = mode_decision.ref_frames;
           let mvs = mode_decision.mvs;
           let skip = mode_decision.skip;
+          let ref_mv_idx = mode_decision.ref_mv_idx;
           let mut cdef_coded = cw.bc.cdef_coded;
           let (tx_size, tx_type) = (mode_decision.tx_size, mode_decision.tx_type);
 
@@ -1984,7 +2084,7 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
           cdef_coded = encode_block_a(seq, fs, cw, if cdef_coded  {w_post_cdef} else {w_pre_cdef},
                                      bsize, bo, skip);
           encode_block_b(seq, fi, fs, cw, if cdef_coded  {w_post_cdef} else {w_pre_cdef},
-                         mode_luma, mode_chroma, ref_frames, mvs, bsize, bo, skip, seq.bit_depth, cfl,
+                         mode_luma, mode_chroma, ref_frames, mvs, ref_mv_idx, bsize, bo, skip, seq.bit_depth, cfl,
                          tx_size, tx_type, mode_context, &mv_stack, false);
         }
         best_decision = mode_decision;
@@ -2050,6 +2150,7 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
             let cfl = best_decision.pred_cfl_params;
             let ref_frames = best_decision.ref_frames;
             let mvs = best_decision.mvs;
+            let ref_mv_idx = best_decision.ref_mv_idx;
             let skip = best_decision.skip;
             let mut cdef_coded = cw.bc.cdef_coded;
             let (tx_size, tx_type) = (best_decision.tx_size, best_decision.tx_type);
@@ -2065,7 +2166,7 @@ fn encode_partition_bottomup(seq: &Sequence, fi: &FrameInvariants, fs: &mut Fram
             cdef_coded = encode_block_a(seq, fs, cw, if cdef_coded {w_post_cdef} else {w_pre_cdef},
                                        bsize, bo, skip);
             encode_block_b(seq, fi, fs, cw, if cdef_coded {w_post_cdef} else {w_pre_cdef},
-                          mode_luma, mode_chroma, ref_frames, mvs, bsize, bo, skip, seq.bit_depth, cfl,
+                          mode_luma, mode_chroma, ref_frames, mvs, ref_mv_idx, bsize, bo, skip, seq.bit_depth, cfl,
                           tx_size, tx_type, mode_context, &mv_stack, false);
         }
     }
@@ -2165,50 +2266,19 @@ fn encode_partition_topdown(seq: &Sequence, fi: &FrameInvariants, fs: &mut Frame
             let is_compound = ref_frames[1] != NONE_FRAME;
             let mode_context = cw.find_mvrefs(bo, ref_frames, &mut mv_stack, bsize, false, fi, is_compound);
 
-            // TODO proper remap when is_compound is true
+            let mut ref_mv_idx = 0;
             if !mode_luma.is_intra() {
-                if is_compound && mode_luma != PredictionMode::GLOBAL_GLOBALMV {
-                    let match0 = mv_stack[0].this_mv.row == mvs[0].row && mv_stack[0].this_mv.col == mvs[0].col;
-                    let match1 = mv_stack[0].comp_mv.row == mvs[1].row && mv_stack[0].comp_mv.col == mvs[1].col;
-
-                    mode_luma = if match0 && match1 {
-                        PredictionMode::NEAREST_NEARESTMV
-                    } else if match0 {
-                        PredictionMode::NEAREST_NEWMV
-                    } else if match1 {
-                        PredictionMode::NEW_NEARESTMV
-                    } else {
-                        PredictionMode::NEW_NEWMV
-                    };
-                    if mode_luma != PredictionMode::NEAREST_NEARESTMV && mvs[0].row == 0 && mvs[0].col == 0 &&
-                        mvs[1].row == 0 && mvs[1].col == 0 {
-                        mode_luma = PredictionMode::GLOBAL_GLOBALMV;
-                    }
-                    mode_chroma = mode_luma;
-                } else if !is_compound && mode_luma != PredictionMode::GLOBALMV {
-                    mode_luma = PredictionMode::NEWMV;
-                    for (c, m) in mv_stack.iter().take(4)
-                    .zip([PredictionMode::NEARESTMV, PredictionMode::NEAR0MV,
-                            PredictionMode::NEAR1MV, PredictionMode::NEAR2MV].iter()) {
-                        if c.this_mv.row == mvs[0].row && c.this_mv.col == mvs[0].col {
-                            mode_luma = *m;
-                        }
-                    }
-                    if mode_luma == PredictionMode::NEWMV && mvs[0].row == 0 && mvs[0].col == 0 {
-                        mode_luma =
-                            if mv_stack.len() == 0 { PredictionMode::NEARESTMV }
-                            else if mv_stack.len() == 1 { PredictionMode::NEAR0MV }
-                            else { PredictionMode::GLOBALMV };
-                    }
-                    mode_chroma = mode_luma;
-                }
+                let (new_mode_luma, new_ref_mv_idx) = mode_from_motion(fi, cw, &mvs, is_compound, &mv_stack);
+                mode_luma = new_mode_luma;
+                ref_mv_idx = new_ref_mv_idx;
+                mode_chroma = mode_luma;
             }
 
             // FIXME: every final block that has gone through the RDO decision process is encoded twice
             cdef_coded = encode_block_a(seq, fs, cw, if cdef_coded  {w_post_cdef} else {w_pre_cdef},
                          bsize, bo, skip);
             encode_block_b(seq, fi, fs, cw, if cdef_coded  {w_post_cdef} else {w_pre_cdef},
-                          mode_luma, mode_chroma, ref_frames, mvs, bsize, bo, skip, seq.bit_depth, cfl,
+                          mode_luma, mode_chroma, ref_frames, mvs, ref_mv_idx, bsize, bo, skip, seq.bit_depth, cfl,
                           tx_size, tx_type, mode_context, &mv_stack, false);
         },
         PartitionType::PARTITION_SPLIT => {

@@ -570,9 +570,7 @@ pub enum PredictionMode {
   PAETH_PRED,
   UV_CFL_PRED,
   NEARESTMV,
-  NEAR0MV,
-  NEAR1MV,
-  NEAR2MV,
+  NEARMV,
   GLOBALMV,
   NEWMV,
   // Compound ref compound modes
@@ -821,6 +819,11 @@ use predict::*;
 use util::*;
 
 impl PredictionMode {
+  pub fn has_near_mv(self) -> bool {
+    return self == PredictionMode::NEARMV || self == PredictionMode::NEAR_NEARMV ||
+      self == PredictionMode::NEAR_NEWMV || self == PredictionMode::NEW_NEARMV;
+  }
+
   pub fn predict_intra<'a>(
     self, dst: &'a mut PlaneMutSlice<'a>, tx_size: TxSize, bit_depth: usize,
     ac: &[i16], alpha: i16

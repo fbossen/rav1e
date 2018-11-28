@@ -1567,13 +1567,11 @@ pub fn mode_from_motion(
     }
 
     let modes = if !is_compound {
-        vec![PredictionMode::NEWMV]
-        //vec![PredictionMode::NEARESTMV, PredictionMode::NEARMV, PredictionMode::GLOBALMV, PredictionMode::NEWMV]
+        vec![PredictionMode::NEARESTMV, PredictionMode::NEARMV, PredictionMode::GLOBALMV, PredictionMode::NEWMV]
     } else {
-        vec![PredictionMode::NEW_NEWMV]
-        //vec![PredictionMode::NEAREST_NEARESTMV, PredictionMode::NEAR_NEARMV, PredictionMode::NEAREST_NEWMV,
-        //PredictionMode::NEW_NEARESTMV, PredictionMode::NEAR_NEWMV, PredictionMode::NEW_NEARMV,
-        //PredictionMode::GLOBAL_GLOBALMV, PredictionMode::NEW_NEWMV]
+        vec![PredictionMode::NEAREST_NEARESTMV, PredictionMode::NEAR_NEARMV, PredictionMode::NEAREST_NEWMV,
+        PredictionMode::NEW_NEARESTMV, PredictionMode::NEAR_NEWMV, PredictionMode::NEW_NEARMV,
+        PredictionMode::GLOBAL_GLOBALMV, PredictionMode::NEW_NEWMV]
     };
 
     let mut best_mode = PredictionMode::DC_PRED;
@@ -1588,9 +1586,9 @@ pub fn mode_from_motion(
         mode == PredictionMode::GLOBALMV || mode == PredictionMode::GLOBAL_GLOBALMV {
             0..1
         } else if mode.has_near_mv() {
-            1..mv_stack.len().min(4)
+            1..2 //1..mv_stack.len().min(4)
         } else {
-            0..mv_stack_in.len().min(3).max(1)
+            0..1 //0..mv_stack_in.len().min(3).max(1)
         };
 
         for index in indices {
@@ -1621,7 +1619,6 @@ pub fn mode_from_motion(
             if !valid { continue; }
 
             let wr: &mut dyn Writer = &mut WriterCounter::new();
-            cw.fc.reset_counts();
 
             let tell = wr.tell_frac();
 

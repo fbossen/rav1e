@@ -474,11 +474,18 @@ pub fn rdo_mode_decision(
         } else {
           [global_mv, global_mv]
         };
+        let near_mv = if mv_stack.len() > 1 {
+          [mv_stack[1].this_mv, mv_stack[1].comp_mv]
+        } else {
+          [global_mv, global_mv]
+        };
         for &x in RAV1E_INTER_COMPOUND_MODES {
           let mv0 = if x == PredictionMode::GLOBAL_GLOBALMV {
             global_mv
           } else if x == PredictionMode::NEAREST_NEARESTMV || x == PredictionMode::NEAREST_NEWMV {
             nearest_mv[0]
+          } else if x == PredictionMode::NEAR_NEARMV || x == PredictionMode::NEAR_NEWMV {
+            near_mv[0]
           } else {
             new_mv0
           };
@@ -486,6 +493,8 @@ pub fn rdo_mode_decision(
             global_mv
           } else if x == PredictionMode::NEAREST_NEARESTMV || x == PredictionMode::NEW_NEARESTMV {
             nearest_mv[1]
+          } else if x == PredictionMode::NEAR_NEARMV || x == PredictionMode::NEW_NEARMV {
+            near_mv[1]
           } else {
             new_mv1
           };

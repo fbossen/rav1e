@@ -53,7 +53,10 @@ pub static RAV1E_INTER_COMPOUND_MODES: &'static [PredictionMode] = &[
   PredictionMode::NEAREST_NEARESTMV,
   PredictionMode::NEW_NEWMV,
   PredictionMode::NEAREST_NEWMV,
-  PredictionMode::NEW_NEARESTMV
+  PredictionMode::NEW_NEARESTMV,
+  PredictionMode::NEAR_NEARMV,
+  PredictionMode::NEAR_NEWMV,
+  PredictionMode::NEW_NEARMV,
 ];
 
 // Weights are quadratic from '1' to '1 / block_size', scaled by 2^sm_weight_log2_scale.

@@ -1567,11 +1567,13 @@ pub fn mode_from_motion(
     }
 
     let modes = if !is_compound {
-        vec![PredictionMode::NEARESTMV, PredictionMode::NEARMV, PredictionMode::GLOBALMV, PredictionMode::NEWMV]
+        vec![PredictionMode::NEWMV]
+        //vec![PredictionMode::NEARESTMV, PredictionMode::NEARMV, PredictionMode::GLOBALMV, PredictionMode::NEWMV]
     } else {
-        vec![PredictionMode::NEAREST_NEARESTMV, PredictionMode::NEAR_NEARMV, PredictionMode::NEAREST_NEWMV,
-        PredictionMode::NEW_NEARESTMV, PredictionMode::NEAR_NEWMV, PredictionMode::NEW_NEARMV,
-        PredictionMode::GLOBAL_GLOBALMV, PredictionMode::NEW_NEWMV]
+        vec![PredictionMode::NEW_NEWMV]
+        //vec![PredictionMode::NEAREST_NEARESTMV, PredictionMode::NEAR_NEARMV, PredictionMode::NEAREST_NEWMV,
+        //PredictionMode::NEW_NEARESTMV, PredictionMode::NEAR_NEWMV, PredictionMode::NEW_NEARMV,
+        //PredictionMode::GLOBAL_GLOBALMV, PredictionMode::NEW_NEWMV]
     };
 
     let mut best_mode = PredictionMode::DC_PRED;

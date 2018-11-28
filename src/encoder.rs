@@ -1619,6 +1619,8 @@ pub fn mode_from_motion(
             if !valid { continue; }
 
             let wr: &mut dyn Writer = &mut WriterCounter::new();
+            cw.fc.reset_counts();
+
             let tell = wr.tell_frac();
 
             encode_motion_mode(fi, cw, wr, mv_stack_in, mode, index, mvs);

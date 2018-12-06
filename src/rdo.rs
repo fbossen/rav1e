@@ -934,10 +934,10 @@ pub fn rdo_partition_decision(
                   let is_compound = ref_frames[1] != NONE_FRAME;
                   let mode_context = cw.find_mvrefs(bo, ref_frames, &mut mv_stack, subsize, false, fi, is_compound);
 
-                  if bsize >= BlockSize::BLOCK_8X8 && bsize.is_sqr() {
+                  if subsize >= BlockSize::BLOCK_8X8 && subsize.is_sqr() {
                     let w: &mut dyn Writer = if cw.bc.cdef_coded {w_post_cdef} else {w_pre_cdef};
                     let tell = w.tell_frac();
-                    cw.write_partition(w, bo, PartitionType::PARTITION_NONE, bsize);
+                    cw.write_partition(w, bo, PartitionType::PARTITION_NONE, subsize);
                     cost = (w.tell_frac() - tell) as f64 * get_lambda(fi, seq.bit_depth)/ ((1 << OD_BITRES) as f64);
                   }
 

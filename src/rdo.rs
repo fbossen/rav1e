@@ -936,9 +936,7 @@ pub fn rdo_partition_decision(
 
                   if subsize >= BlockSize::BLOCK_8X8 && subsize.is_sqr() {
                     let w: &mut dyn Writer = if cw.bc.cdef_coded {w_post_cdef} else {w_pre_cdef};
-                    let tell = w.tell_frac();
                     cw.write_partition(w, bo, PartitionType::PARTITION_NONE, subsize);
-                    cost = (w.tell_frac() - tell) as f64 * get_lambda(fi, seq.bit_depth)/ ((1 << OD_BITRES) as f64);
                   }
 
                   cdef_coded = encode_block_a(seq, fs, cw, if cdef_coded  {w_post_cdef} else {w_pre_cdef},

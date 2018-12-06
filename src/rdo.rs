@@ -849,12 +849,6 @@ let w_post_checkpoint = w_post_cdef.checkpoint();
 
 let mut cost: f64 = 0.0;
 
-if bsize >= BlockSize::BLOCK_8X8 {
-let w: &mut dyn Writer = if cw.bc.cdef_coded {w_post_cdef} else {w_pre_cdef};
-let tell = w.tell_frac();
-cw.write_partition(w, bo, partition, bsize);
-cost = (w.tell_frac() - tell) as f64 * get_lambda(fi, seq.bit_depth)/ ((1 << OD_BITRES) as f64);
-}
 
     let mut rd: f64;
     let mut child_modes = std::vec::Vec::new();
@@ -882,6 +876,14 @@ cost = (w.tell_frac() - tell) as f64 * get_lambda(fi, seq.bit_depth)/ ((1 << OD_
         if subsize == BlockSize::BLOCK_INVALID {
           continue;
         }
+
+if bsize >= BlockSize::BLOCK_8X8 {
+let w: &mut dyn Writer = if cw.bc.cdef_coded {w_post_cdef} else {w_pre_cdef};
+let tell = w.tell_frac();
+cw.write_partition(w, bo, partition, bsize);
+cost = (w.tell_frac() - tell) as f64 * get_lambda(fi, seq.bit_depth)/ ((1 << OD_BITRES) as f64);
+}
+
         //pmv = best_pred_modes[0].mvs[0];
 
         assert!(best_pred_modes.len() <= 4);
@@ -936,7 +938,7 @@ cost = (w.tell_frac() - tell) as f64 * get_lambda(fi, seq.bit_depth)/ ((1 << OD_
 if bsize >= BlockSize::BLOCK_8X8 {
 let w: &mut dyn Writer = if cw.bc.cdef_coded {w_post_cdef} else {w_pre_cdef};
 let tell = w.tell_frac();
-cw.write_partition(w, bo, partition, bsize);
+cw.write_partition(w, bo, PartitionType::PARTITION_NONE, bsize);
 cost = (w.tell_frac() - tell) as f64 * get_lambda(fi, seq.bit_depth)/ ((1 << OD_BITRES) as f64);
 }
 

@@ -199,10 +199,12 @@ pub fn motion_estimation(
         let center_mv_h = best_mv;
         for i in 0..3 {
           for j in 0..3 {
+/*
             // Skip the center point that was already tested
             if i == 1 && j == 1 {
               continue;
             }
+*/
 
             let cand_mv = MotionVector {
               row: center_mv_h.row + step * (i as i16 - 1),

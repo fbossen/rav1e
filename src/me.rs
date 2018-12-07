@@ -95,6 +95,7 @@ mod nasm {
     plane_org: &PlaneSlice, plane_ref: &PlaneSlice, blk_h: usize,
     blk_w: usize, bit_depth: usize
   ) -> u32 {
+/*
     #[cfg(all(target_arch = "x86_64", not(windows), feature = "nasm"))]
     {
       if is_x86_feature_detected!("ssse3") && blk_h >= 4 && blk_w >= 4 {
@@ -103,6 +104,7 @@ mod nasm {
         };
       }
     }
+*/
     super::native::get_sad(plane_org, plane_ref, blk_h, blk_w, bit_depth)
   }
 }

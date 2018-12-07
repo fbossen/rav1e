@@ -839,11 +839,6 @@ pub fn rdo_partition_decision(
   let w_post_checkpoint = w_post_cdef.checkpoint();
 
   for &partition in RAV1E_PARTITION_TYPES {
-    // Do not re-encode results we already have
-    if partition == cached_block.part_type && cached_block.rd_cost < max_rd {
-      continue;
-    }
-
     let mut cost: f64 = 0.0;
 
     let mut rd: f64;

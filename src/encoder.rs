@@ -2486,8 +2486,8 @@ fn encode_partition_topdown(seq: &Sequence, fi: &FrameInvariants, fs: &mut Frame
                         w_post_cdef,
                         subsize,
                         &offset,
-                        if no_splits {
-                            &Some(
+                        &if no_splits {
+                            Some(
                                 RDOOutput {
                                     rd_cost: mode.rd_cost,
                                     part_type: PartitionType::PARTITION_NONE,
@@ -2495,12 +2495,13 @@ fn encode_partition_topdown(seq: &Sequence, fi: &FrameInvariants, fs: &mut Frame
                                 }
                             )
                         } else {
-                            &None
+                            None
                         },
                         pmvs
                     );
 
-                    if cw.get_mode(offset) != PartitionType::PARTITION_NONE {
+                    let blk = cw.bc.at(&offset);
+                    if blk.n4_w != subsize.width_mi() || blk.n4_h != subsize.height_mi() {
                         no_splits = false;
                     }
                 }

@@ -828,15 +828,9 @@ pub fn rdo_partition_decision(
   bsize: BlockSize, bo: &BlockOffset,
   cached_block: &RDOOutput, pmvs: &[[Option<MotionVector>; REF_FRAMES]; 5]
 ) -> RDOOutput {
-  let max_rd = std::f64::MAX;
-
   let mut best_partition = cached_block.part_type;
   let mut best_rd = cached_block.rd_cost;
   let mut best_pred_modes = cached_block.part_modes.clone();
-
-  let cw_checkpoint = cw.checkpoint();
-  let w_pre_checkpoint = w_pre_cdef.checkpoint();
-  let w_post_checkpoint = w_post_cdef.checkpoint();
 
   for &partition in RAV1E_PARTITION_TYPES {
     let mut cost: f64 = 0.0;
@@ -868,13 +862,6 @@ pub fn rdo_partition_decision(
           continue;
         }
 
-        if bsize >= BlockSize::BLOCK_8X8 {
-          let w: &mut dyn Writer = if cw.bc.cdef_coded {w_post_cdef} else {w_pre_cdef};
-          let tell = w.tell_frac();
-          cw.write_partition(w, bo, partition, bsize);
-          cost = (w.tell_frac() - tell) as f64 * get_lambda(fi, seq.bit_depth)/ ((1 << OD_BITRES) as f64);
-        }
-
         //pmv = best_pred_modes[0].mvs[0];
 
         assert!(best_pred_modes.len() <= 4);
@@ -898,6 +885,13 @@ pub fn rdo_partition_decision(
         let cw_checkpoint = cw.checkpoint();
         let w_pre_checkpoint = w_pre_cdef.checkpoint();
         let w_post_checkpoint = w_post_cdef.checkpoint();
+
+        if bsize >= BlockSize::BLOCK_8X8 {
+          let w: &mut dyn Writer = if cw.bc.cdef_coded {w_post_cdef} else {w_pre_cdef};
+          let tell = w.tell_frac();
+          cw.write_partition(w, bo, partition, bsize);
+          cost = (w.tell_frac() - tell) as f64 * get_lambda(fi, seq.bit_depth)/ ((1 << OD_BITRES) as f64);
+        }
 
         child_modes.extend(
           partitions
@@ -949,11 +943,6 @@ pub fn rdo_partition_decision(
       }
     }
 
-
-    cw.rollback(&cw_checkpoint);
-    w_pre_cdef.rollback(&w_pre_checkpoint);
-    w_post_cdef.rollback(&w_post_checkpoint);
-
     rd = cost + child_modes.iter().map(|m| m.rd_cost).sum::<f64>();
 
     if rd < best_rd {
@@ -961,8 +950,6 @@ pub fn rdo_partition_decision(
       best_partition = partition;
       best_pred_modes = child_modes.clone();
     }
-
-    cw.rollback(&cw_checkpoint);
   }
 
   assert!(best_rd >= 0_f64);

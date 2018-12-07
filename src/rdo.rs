@@ -942,7 +942,7 @@ pub fn rdo_partition_decision(
                                 mode_luma, mode_chroma, ref_frames, mvs, subsize, bo, skip, seq.bit_depth, cfl,
                                 tx_size, tx_type, mode_context, &mv_stack, false);
 
-                  if subsize >= BlockSize::BLOCK_8X8 {
+                  if subsize >= BlockSize::BLOCK_8X8 && subsize.is_sqr() {
                     cw.bc.update_partition_context(bo, subsize.subsize(PartitionType::PARTITION_NONE), subsize);
                   }
                 }

@@ -2471,15 +2471,38 @@ fn encode_partition_topdown(seq: &Sequence, fi: &FrameInvariants, fs: &mut Frame
                 // The optimal prediction modes for each split block is known from an rdo_partition_decision() call
                 assert!(subsize != BlockSize::BLOCK_INVALID);
 
+                let mut no_splits = true;
+
                 for mode in rdo_output.part_modes {
                     let offset = mode.bo.clone();
 
                     // Each block is subjected to a new splitting decision
-                    encode_partition_topdown(seq, fi, fs, cw, w_pre_cdef, w_post_cdef, subsize, &offset,
-                        &Some(RDOOutput {
-                            rd_cost: mode.rd_cost,
-                            part_type: PartitionType::PARTITION_NONE,
-                            part_modes: vec![mode] }), pmvs);
+                    encode_partition_topdown(
+                        seq,
+                        fi,
+                        fs,
+                        cw,
+                        w_pre_cdef,
+                        w_post_cdef,
+                        subsize,
+                        &offset,
+                        if no_splits {
+                            &Some(
+                                RDOOutput {
+                                    rd_cost: mode.rd_cost,
+                                    part_type: PartitionType::PARTITION_NONE,
+                                    part_modes: vec![mode]
+                                }
+                            )
+                        } else {
+                            &None
+                        },
+                        pmvs
+                    );
+
+                    if cw.get_mode(offset) != PartitionType::PARTITION_NONE {
+                        no_splits = false;
+                    }
                 }
             }
             else {

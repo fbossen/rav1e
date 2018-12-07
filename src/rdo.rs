@@ -833,9 +833,11 @@ pub fn rdo_partition_decision(
   let mut best_pred_modes = cached_block.part_modes.clone();
 
   for &partition in RAV1E_PARTITION_TYPES {
-    let mut cost: f64 = 0.0;
+    if partition == cached_block.part_type {
+      continue;
+    }
 
-    let mut rd: f64;
+    let mut cost: f64 = 0.0;
     let mut child_modes = std::vec::Vec::new();
 
     match partition {
@@ -847,12 +849,7 @@ pub fn rdo_partition_decision(
         let pmv_idx = ((bo.x & 32) >> 5) + ((bo.y & 32) >> 4) + 1;
         let spmvs = &pmvs[pmv_idx];
 
-        let mode_decision = cached_block
-          .part_modes
-          .get(0)
-          .unwrap_or(
-            &rdo_mode_decision(seq, fi, fs, cw, bsize, bo, spmvs, false).part_modes[0]
-          ).clone();
+        let mode_decision = rdo_mode_decision(seq, fi, fs, cw, bsize, bo, spmvs, false).part_modes[0].clone();
         child_modes.push(mode_decision);
       }
       PartitionType::PARTITION_SPLIT => {
@@ -943,7 +940,7 @@ pub fn rdo_partition_decision(
       }
     }
 
-    rd = cost + child_modes.iter().map(|m| m.rd_cost).sum::<f64>();
+    let rd = cost + child_modes.iter().map(|m| m.rd_cost).sum::<f64>();
 
     if rd < best_rd {
       best_rd = rd;

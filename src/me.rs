@@ -322,7 +322,7 @@ pub fn estimate_motion_ss4(
       x: (bo_adj.x as isize) << BLOCK_TO_PLANE_SHIFT >> 2,
       y: (bo_adj.y as isize) << BLOCK_TO_PLANE_SHIFT >> 2
     };
-    let range = 64 * fi.me_range_scale as isize;
+    let range = 192 * fi.me_range_scale as isize;
     let (mvx_min, mvx_max, mvy_min, mvy_max) = get_mv_range(fi, &bo_adj, blk_w, blk_h);
     let x_lo = po.x + (((-range).max(mvx_min / 8)) >> 2);
     let x_hi = po.x + (((range).min(mvx_max / 8)) >> 2);

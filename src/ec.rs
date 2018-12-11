@@ -19,7 +19,7 @@ use std::io;
 use util::ILog;
 use util::msb;
 
-pub const OD_BITRES: u8 = 4;
+pub const OD_BITRES: u8 = 5;
 const EC_PROB_SHIFT: u32 = 6;
 const EC_MIN_PROB: u32 = 4;
 type ec_window = u32;

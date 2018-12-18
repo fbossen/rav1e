@@ -377,16 +377,6 @@ pub fn rdo_mode_decision(
 
   let cw_checkpoint = cw.checkpoint();
 
-  // Exclude complex prediction modes at higher speed levels
-  let intra_mode_set = if (fi.frame_type == FrameType::KEY
-    && fi.config.speed_settings.prediction_modes >= PredictionModesSetting::ComplexKeyframes)
-    || (fi.frame_type == FrameType::INTER && fi.config.speed_settings.prediction_modes >= PredictionModesSetting::ComplexAll)
-  {
-    RAV1E_INTRA_MODES
-  } else {
-    RAV1E_INTRA_MODES_MINIMAL
-  };
-
   let mut ref_frames_set = Vec::new();
   let mut ref_slot_set = Vec::new();
   let mut mvs_from_me = Vec::new();
@@ -603,7 +593,64 @@ pub fn rdo_mode_decision(
   });
 
   if !best.skip {
-    intra_mode_set.iter().for_each(|&luma_mode| {
+    let tx_size = match bsize {
+      BlockSize::BLOCK_4X4 => TxSize::TX_4X4,
+      BlockSize::BLOCK_8X8 => TxSize::TX_8X8,
+      BlockSize::BLOCK_16X16 => TxSize::TX_16X16,
+      BlockSize::BLOCK_4X8 => TxSize::TX_4X8,
+      BlockSize::BLOCK_8X4 => TxSize::TX_8X4,
+      BlockSize::BLOCK_8X16 => TxSize::TX_8X16,
+      BlockSize::BLOCK_16X8 => TxSize::TX_16X8,
+      BlockSize::BLOCK_16X32 => TxSize::TX_16X32,
+      BlockSize::BLOCK_32X16 => TxSize::TX_32X16,
+      BlockSize::BLOCK_32X32 => TxSize::TX_32X32,
+      BlockSize::BLOCK_32X64 => TxSize::TX_32X64,
+      BlockSize::BLOCK_64X32 => TxSize::TX_64X32,
+      BlockSize::BLOCK_64X64 => TxSize::TX_64X64,
+      _ => unimplemented!()
+    };
+
+    // Reduce number of prediction modes at higher speed levels
+    let num_modes_rdo = if (fi.frame_type == FrameType::KEY
+      && fi.config.speed_settings.prediction_modes >= PredictionModesSetting::ComplexKeyframes)
+      || (fi.frame_type == FrameType::INTER && fi.config.speed_settings.prediction_modes >= PredictionModesSetting::ComplexAll)
+    {
+      7
+    } else {
+      3
+    };
+
+    let intra_mode_set = RAV1E_INTRA_MODES;
+    let mut sads = intra_mode_set.iter().map(|&luma_mode| {
+      let rec = &mut fs.rec.planes[0];
+      let po = bo.plane_offset(&rec.cfg);
+      luma_mode.predict_intra(&mut rec.mut_slice(&po), tx_size, seq.bit_depth, &[0i16; 2], 0, 0, fi.w_in_b, fi.h_in_b);
+
+      let plane_org = fs.input.planes[0].slice(&po);
+      let plane_ref = rec.slice(&po);
+
+      (luma_mode, get_sad(&plane_org, &plane_ref, tx_size.height(), tx_size.width(), seq.bit_depth))
+    }).collect::<Vec<_>>();
+
+    sads.sort_by_key(|a| a.1);
+
+    // Find mode with lowest rate cost
+    let mut z = 32768;
+    let probs_all = if fi.frame_type == FrameType::INTER {
+      cw.get_cdf_intra_mode(bsize)
+    } else {
+      cw.get_cdf_intra_mode_kf(bo)
+    }.iter().map(|&a| { let d = z - a; z = a; d }).collect::<Vec<_>>();
+
+
+    let mut probs = intra_mode_set.iter().map(|&a| (a, probs_all[a as usize])).collect::<Vec<_>>();
+    probs.sort_by_key(|a| !a.1);
+
+    let mut modes = Vec::new();
+    probs.iter().take(num_modes_rdo / 2).for_each(|&(luma_mode, _prob)| modes.push(luma_mode));
+    sads.iter().take(num_modes_rdo).for_each(|&(luma_mode, _sad)| if !modes.contains(&luma_mode) { modes.push(luma_mode) } );
+
+    modes.iter().take(num_modes_rdo).for_each(|&luma_mode| {
       let mvs = [MotionVector { row: 0, col: 0 }; 2];
       let ref_frames = [INTRA_FRAME, NONE_FRAME];
       let mut mode_set_chroma = vec![luma_mode];
